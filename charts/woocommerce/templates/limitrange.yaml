@@ -1,0 +1,18 @@
+{{- if .Values.limitRange.enabled }}
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: {{ .Release.Name }}-limits
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  limits:
+    - default:
+        cpu: {{ .Values.limitRange.default.cpu | default "500m" }}
+        memory: {{ .Values.limitRange.default.memory | default "512Mi" }}
+      defaultRequest:
+        cpu: {{ .Values.limitRange.defaultRequest.cpu | default "250m" }}
+        memory: {{ .Values.limitRange.defaultRequest.memory | default "256Mi" }}
+      type: Container
+{{- end }}
+

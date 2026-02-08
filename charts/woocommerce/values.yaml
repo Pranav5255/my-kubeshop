@@ -1,0 +1,75 @@
+# Default values for woocommerce.
+# This is a wrapper chart.
+
+wordpress:
+  enabled: true
+  wordpressUsername: user
+  wordpressPassword: password
+  wordpressEmail: user@example.com
+  
+  mariadb:
+    enabled: false # We use the separate dependency
+  
+  externalDatabase:
+    # This must be provided dynamically or match the service name
+    # The bitnami/mariadb chart creates a service named <release>-mariadb
+    # We will override this in the backend provisioner or leave it empty to force override?
+    # No, let's just put a placeholder that clearly indicates it needs to be set, 
+    # or rely on the backend to always set it.
+    host: "mariadb-placeholder" 
+    user: root
+    password: "root-password"
+    database: bitnami_wordpress
+
+  # Mount the setup script
+  extraVolumes:
+    - name: setup-script
+      configMap:
+        name: wp-setup
+        defaultMode: 0755
+
+  extraVolumeMounts:
+    - name: setup-script
+      mountPath: /scripts/setup.sh
+      subPath: setup.sh
+
+  # Note: Setup script is now executed via a Kubernetes Job (setup-job.yaml)
+  # instead of PostStartHook for better reliability and log visibility
+
+mariadb:
+  enabled: true
+  auth:
+    rootPassword: "root-password"
+    database: bitnami_wordpress
+  primary:
+    persistence:
+      enabled: true
+      size: 1Gi
+
+ingress:
+  enabled: true
+  hostname: store.local
+  annotations:
+    kubernetes.io/ingress.class: nginx
+
+# Security & Isolation
+networkPolicy:
+  enabled: true
+
+resourceQuota:
+  enabled: true
+  requests:
+    cpu: "1"
+    memory: "1Gi"
+  limits:
+    cpu: "2"
+    memory: "2Gi"
+
+limitRange:
+  enabled: true
+  default:
+    cpu: "500m"
+    memory: "512Mi"
+  defaultRequest:
+    cpu: "250m"
+    memory: "256Mi"

@@ -1,0 +1,30 @@
+# Local Environment Values
+wordpress:
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: true
+    hostname: store.127.0.0.1.nip.io
+    annotations:
+      kubernetes.io/ingress.class: nginx
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+mariadb:
+  primary:
+    persistence:
+      enabled: true
+      size: 1Gi
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+

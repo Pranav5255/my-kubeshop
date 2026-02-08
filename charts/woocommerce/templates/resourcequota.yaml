@@ -1,0 +1,17 @@
+{{- if .Values.resourceQuota.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ .Release.Name }}-quota
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  hard:
+    requests.cpu: {{ .Values.resourceQuota.requests.cpu | default "1" }}
+    requests.memory: {{ .Values.resourceQuota.requests.memory | default "1Gi" }}
+    limits.cpu: {{ .Values.resourceQuota.limits.cpu | default "2" }}
+    limits.memory: {{ .Values.resourceQuota.limits.memory | default "2Gi" }}
+    pods: {{ .Values.resourceQuota.pods | default "10" }}
+    persistentvolumeclaims: {{ .Values.resourceQuota.pvcs | default "5" }}
+{{- end }}
+

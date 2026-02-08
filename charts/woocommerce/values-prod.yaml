@@ -1,0 +1,31 @@
+# Production Environment Values (VPS)
+wordpress:
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: true
+    hostname: store.example.com # This will be overridden by the backend based on actual domain
+    annotations:
+      kubernetes.io/ingress.class: nginx
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+mariadb:
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
