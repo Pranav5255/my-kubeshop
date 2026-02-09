@@ -31,7 +31,7 @@ export class WooCommerceProvisioner implements IStoreProvisioner {
 
       // 1. Helm Install with environment-based domain
       const hostname = `${name}.store.${this.baseDomain}.nip.io`;
-      const chartPath = path.resolve(__dirname, '../../charts/woocommerce');
+      const chartPath = path.resolve(process.cwd(), '../charts/woocommerce');
       
       await execa('helm', [
         'install',
