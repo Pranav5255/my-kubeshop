@@ -1,0 +1,447 @@
+================================================================================
+URUMI STORE PROVISIONING - DEPLOYMENT GUIDE
+================================================================================
+
+TABLE OF CONTENTS
+1. Local Development Setup
+2. Production VPS Setup
+3. Testing & Verification
+4. Troubleshooting
+5. Scaling & Performance
+
+================================================================================
+1. LOCAL DEVELOPMENT SETUP
+================================================================================
+
+PREREQUISITES:
+  - Docker (for k3d)
+  - k3d (https://k3d.io/)
+  - kubectl (https://kubernetes.io/docs/tasks/tools/)
+  - Helm 3+ (https://helm.sh/)
+  - Node.js 18+ (https://nodejs.org/)
+  - npm or yarn
+
+QUICK START:
+
+1. Run setup script (PowerShell):
+   PS> .\scripts\setup-local.ps1
+
+   This will:
+   - Create k3d cluster named "urumi"
+   - Install Nginx Ingress Controller
+   - Install npm dependencies for backend and frontend
+
+2. Start backend (Terminal 1):
+   $ cd backend
+   $ npm install
+   $ npm run dev
+   
+   Expected output:
+   Server running on port 3001
+   BASE_DOMAIN: 127.0.0.1
+   NODE_ENV: development
+
+3. Start frontend (Terminal 2):
+   $ cd frontend
+   $ npm install
+   $ npm run dev
+   
+   Expected output:
+   VITE v5.0.8 ready in XXX ms
+   ➜  Local:   http://localhost:5173/
+
+4. Open dashboard:
+   http://localhost:5173
+
+5. Create a test store:
+   - Click "New Store"
+   - Enter name: "test-store-1"
+   - Select "WooCommerce"
+   - Click "Create Store"
+   - Wait 2-5 minutes for provisioning
+
+6. Verify store is ready:
+   - Status should change from "Provisioning" to "Ready"
+   - Click "Open Store" to access the storefront
+
+MANUAL CLUSTER SETUP (if not using script):
+
+1. Create k3d cluster:
+   $ k3d cluster create urumi --api-port 6550 -p "80:80@loadbalancer"
+
+2. Verify cluster:
+   $ kubectl cluster-info
+   $ kubectl get nodes
+
+3. Install Ingress Controller:
+   $ helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+   $ helm repo update
+   $ helm install ingress-nginx ingress-nginx/ingress-nginx \
+     --namespace ingress-nginx --create-namespace
+
+4. Verify Ingress Controller:
+   $ kubectl get pods -n ingress-nginx
+   $ kubectl get svc -n ingress-nginx
+
+================================================================================
+2. PRODUCTION VPS SETUP
+================================================================================
+
+PREREQUISITES:
+  - VPS with Ubuntu 22.04 (e.g., GCP e2-medium, AWS t3.medium)
+  - Public IP address
+  - SSH access
+  - 2+ CPU cores
+  - 4GB+ RAM
+  - 20GB+ disk space
+
+STEP 1: PROVISION VPS
+
+Example on GCP:
+  $ gcloud compute instances create urumi-vps \
+    --image-family=ubuntu-2204-lts \
+    --image-project=ubuntu-os-cloud \
+    --machine-type=e2-medium \
+    --zone=us-central1-a \
+    --boot-disk-size=20GB
+
+Example on AWS:
+  $ aws ec2 run-instances \
+    --image-id ami-0c55b159cbfafe1f0 \
+    --instance-type t3.medium \
+    --key-name my-key \
+    --security-groups default
+
+STEP 2: SSH INTO VPS
+
+  $ ssh -i <key> ubuntu@<VPS_IP>
+  $ sudo su -
+
+STEP 3: INSTALL k3s
+
+  $ curl -sfL https://get.k3s.io | sh -
+  
+  Verify installation:
+  $ k3s kubectl get nodes
+
+STEP 4: CONFIGURE kubectl
+
+On your local machine:
+  $ mkdir -p ~/.kube
+  $ scp -i <key> ubuntu@<VPS_IP>:/etc/rancher/k3s/k3s.yaml ~/.kube/config-prod
+  $ sed -i 's/127.0.0.1/<VPS_IP>/g' ~/.kube/config-prod
+  $ export KUBECONFIG=~/.kube/config-prod
+  $ kubectl cluster-info
+
+STEP 5: INSTALL INGRESS CONTROLLER
+
+  $ helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+  $ helm repo update
+  $ helm install ingress-nginx ingress-nginx/ingress-nginx \
+    --namespace ingress-nginx --create-namespace
+
+STEP 6: CLONE REPOSITORY
+
+On VPS:
+  $ git clone https://github.com/your-username/urumi.git
+  $ cd urumi
+
+STEP 7: INSTALL DEPENDENCIES
+
+  $ cd backend
+  $ npm install
+  $ cd ../frontend
+  $ npm install
+  $ cd ..
+
+STEP 8: BUILD FRONTEND
+
+  $ cd frontend
+  $ npm run build
+  $ cd ..
+
+STEP 9: START BACKEND
+
+  $ cd backend
+  $ export BASE_DOMAIN=<VPS_IP>
+  $ export NODE_ENV=production
+  $ npm start
+
+  Or use PM2 for process management:
+  $ npm install -g pm2
+  $ pm2 start "npm start" --name urumi-backend
+  $ pm2 save
+  $ pm2 startup
+
+STEP 10: SERVE FRONTEND
+
+Option A: Using Node.js static server:
+  $ npm install -g serve
+  $ serve -s frontend/dist -l 5173
+
+Option B: Using Nginx:
+  $ sudo apt-get install nginx
+  $ sudo cp frontend/dist/* /var/www/html/
+  $ sudo systemctl start nginx
+
+STEP 11: CONFIGURE FIREWALL
+
+  $ sudo ufw allow 22/tcp
+  $ sudo ufw allow 80/tcp
+  $ sudo ufw allow 443/tcp
+  $ sudo ufw enable
+
+STEP 12: ACCESS DASHBOARD
+
+  http://<VPS_IP>:5173
+
+STEP 13: CREATE TEST STORE
+
+  - Click "New Store"
+  - Enter name: "prod-test-1"
+  - Select "WooCommerce"
+  - Click "Create Store"
+  - Wait for provisioning
+  - Access store at: http://prod-test-1.store.<VPS_IP>.nip.io
+
+================================================================================
+3. TESTING & VERIFICATION
+================================================================================
+
+AUTOMATED E2E TESTS:
+
+Run the E2E test script:
+  $ bash scripts/test-e2e.sh
+
+This will:
+  - Check backend health
+  - Create a test store
+  - Wait for provisioning
+  - Verify store accessibility
+  - Delete the store
+  - Verify cleanup
+
+MANUAL TESTING:
+
+1. Create Store:
+   - Dashboard → New Store
+   - Name: "manual-test-1"
+   - Type: WooCommerce
+   - Click Create
+
+2. Monitor Provisioning:
+   - Watch status change from "Provisioning" to "Ready"
+   - Check backend logs for progress
+   - Check Kubernetes resources:
+     $ kubectl get pods -n manual-test-1
+     $ kubectl get pvc -n manual-test-1
+     $ kubectl get ingress -n manual-test-1
+
+3. Access Store:
+   - Click "Open Store"
+   - Verify Storefront theme loads
+   - Verify products are visible
+
+4. Place Order:
+   - Add product to cart
+   - Proceed to checkout
+   - Fill in billing details
+   - Select "Cash on Delivery"
+   - Place order
+   - Verify order confirmation
+
+5. Verify Order in Admin:
+   - Go to: http://<store-url>/wp-admin
+   - Login: user / password
+   - Navigate: WooCommerce → Orders
+   - Verify order appears
+
+6. Delete Store:
+   - Dashboard → Delete icon
+   - Confirm deletion
+   - Verify status disappears
+
+7. Verify Cleanup:
+   - Check namespace is deleted:
+     $ kubectl get namespace manual-test-1
+     # Should return: NotFound
+   
+   - Check PVCs are deleted:
+     $ kubectl get pvc -n manual-test-1
+     # Should return: NotFound
+   
+   - Check Helm release is gone:
+     $ helm list -n manual-test-1
+     # Should be empty
+
+================================================================================
+4. TROUBLESHOOTING
+================================================================================
+
+ISSUE: Backend cannot connect to Kubernetes
+
+Solution:
+  - Verify kubeconfig is set: echo $KUBECONFIG
+  - Verify cluster is running: kubectl cluster-info
+  - Check kubeconfig permissions: chmod 600 ~/.kube/config
+  - Verify kubectl works: kubectl get nodes
+
+ISSUE: Ingress not working (store URL not accessible)
+
+Solution:
+  - Verify Ingress Controller is running:
+    $ kubectl get pods -n ingress-nginx
+  
+  - Check Ingress resource:
+    $ kubectl get ingress -n <store-name>
+    $ kubectl describe ingress -n <store-name>
+  
+  - Verify nip.io DNS resolution:
+    $ nslookup test-store.store.127.0.0.1.nip.io
+  
+  - Check Ingress Controller logs:
+    $ kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx
+
+ISSUE: Store provisioning times out
+
+Solution:
+  - Check pod status:
+    $ kubectl get pods -n <store-name>
+    $ kubectl describe pod -n <store-name>
+  
+  - Check pod logs:
+    $ kubectl logs -n <store-name> -l app.kubernetes.io/name=wordpress
+    $ kubectl logs -n <store-name> -l app.kubernetes.io/name=mariadb
+  
+  - Check setup job:
+    $ kubectl get jobs -n <store-name>
+    $ kubectl logs -n <store-name> -l component=setup
+  
+  - Increase timeout in backend/src/quota.ts if needed
+
+ISSUE: Products not showing in store
+
+Solution:
+  - Check setup job completed:
+    $ kubectl get jobs -n <store-name>
+  
+  - Check setup job logs:
+    $ kubectl logs -n <store-name> -l component=setup
+  
+  - Verify WooCommerce is installed:
+    $ kubectl exec -it <wordpress-pod> -n <store-name> -- wp plugin list
+  
+  - Manually create products:
+    $ kubectl exec -it <wordpress-pod> -n <store-name> -- wp wc product create \
+      --name="Test Product" --price=9.99
+
+ISSUE: Payment gateways not showing
+
+Solution:
+  - Check WooCommerce settings:
+    $ kubectl exec -it <wordpress-pod> -n <store-name> -- \
+      wp option get woocommerce_cod_settings
+  
+  - Re-enable payment gateways:
+    $ kubectl exec -it <wordpress-pod> -n <store-name> -- \
+      wp option update woocommerce_cod_settings '{"enabled":"yes"}'
+
+ISSUE: Store deletion fails
+
+Solution:
+  - Check Helm release:
+    $ helm list -n <store-name>
+  
+  - Manually uninstall:
+    $ helm uninstall <store-name> -n <store-name>
+  
+  - Delete PVCs:
+    $ kubectl delete pvc --all -n <store-name>
+  
+  - Delete namespace:
+    $ kubectl delete namespace <store-name>
+
+ISSUE: Backend crashes or restarts
+
+Solution:
+  - Check backend logs:
+    $ npm run dev 2>&1 | tee backend.log
+  
+  - Check for errors in logs
+  - Verify environment variables are set:
+    $ echo $BASE_DOMAIN
+    $ echo $NODE_ENV
+  
+  - Check Node.js version:
+    $ node --version
+
+================================================================================
+5. SCALING & PERFORMANCE
+================================================================================
+
+HORIZONTAL SCALING:
+
+1. Scale Backend:
+   - Run multiple backend instances
+   - Use load balancer (nginx, HAProxy)
+   - All instances share same Kubernetes cluster
+   - Concurrency queue prevents overload
+
+2. Scale Provisioning:
+   - Increase MAX_CONCURRENT in backend/src/queue.ts
+   - Monitor cluster resources
+   - Add more nodes if needed
+
+3. Scale Cluster:
+   - Add more nodes to Kubernetes cluster
+   - Stores will be distributed across nodes
+   - Use pod affinity for HA
+
+VERTICAL SCALING:
+
+1. Increase Pod Resources:
+   - Edit values-prod.yaml
+   - Increase resource limits
+   - Redeploy stores
+
+2. Increase Node Resources:
+   - Upgrade VPS instance type
+   - Add more CPU/RAM
+
+PERFORMANCE OPTIMIZATION:
+
+1. Database:
+   - Use managed database (RDS, Cloud SQL)
+   - Enable replication for HA
+   - Optimize queries
+
+2. Storage:
+   - Use fast storage (SSD)
+   - Enable caching
+   - Optimize backup strategy
+
+3. Networking:
+   - Use CDN for static assets
+   - Enable compression
+   - Optimize DNS
+
+4. Monitoring:
+   - Set up Prometheus for metrics
+   - Use Grafana for dashboards
+   - Set up alerts
+
+CAPACITY PLANNING:
+
+For 100 concurrent stores:
+  - Cluster: 4+ nodes (e2-medium or equivalent)
+  - Backend: 2-3 instances
+  - Storage: 100GB+ SSD
+  - Network: 100Mbps+
+
+For 1000 concurrent stores:
+  - Cluster: 20+ nodes
+  - Backend: 5-10 instances
+  - Storage: 1TB+ SSD
+  - Network: 1Gbps+
+
+================================================================================

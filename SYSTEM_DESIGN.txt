@@ -1,0 +1,355 @@
+================================================================================
+URUMI STORE PROVISIONING PLATFORM - SYSTEM DESIGN & ARCHITECTURE
+================================================================================
+
+1. ARCHITECTURE OVERVIEW
+================================================================================
+
+The platform follows a microservices-inspired architecture with clear separation
+of concerns:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          FRONTEND (React + Vite)                            │
+│  - Dashboard for store management                                           │
+│  - Real-time status polling (3s interval)                                   │
+│  - Metrics & activity visualization                                         │
+│  - Quota display                                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓ HTTP
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    BACKEND API (Node.js + Express)                          │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │ Core Services:                                                       │   │
+│  │  - Store Provisioner (WooCommerce, Medusa)                          │   │
+│  │  - Audit Logger (tracks all operations)                             │   │
+│  │  - Quota Manager (per-user limits)                                  │   │
+│  │  - Metrics Collector (performance tracking)                         │   │
+│  │  - Provisioning Queue (concurrency control)                         │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓ kubectl/Helm CLI
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    KUBERNETES CLUSTER (Local or VPS)                        │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │ Per-Store Namespace (Isolated):                                      │   │
+│  │  - WordPress Pod (Bitnami image)                                     │   │
+│  │  - MariaDB Pod (Bitnami image)                                       │   │
+│  │  - Setup Job (configures WooCommerce)                                │   │
+│  │  - Ingress (nip.io domain)                                           │   │
+│  │  - NetworkPolicy (deny-all default)                                  │   │
+│  │  - ResourceQuota (per-store limits)                                  │   │
+│  │  - LimitRange (pod defaults)                                         │   │
+│  │  - PVC (persistent storage)                                          │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+2. ISOLATION STRATEGY (Multi-Tenancy)
+================================================================================
+
+Each store is completely isolated using Kubernetes namespaces:
+
+NAMESPACE ISOLATION:
+  - Every store gets its own namespace (e.g., "my-store-1")
+  - Resources are scoped to the namespace
+  - No cross-namespace communication by default
+
+NETWORK ISOLATION:
+  - NetworkPolicy: Deny-all ingress/egress by default
+  - Allow: Ingress Controller → WordPress (port 80)
+  - Allow: WordPress ↔ MariaDB (port 3306)
+  - Allow: WordPress → DNS (UDP 53)
+  - Allow: WordPress → External (for plugin updates)
+
+RESOURCE ISOLATION:
+  - ResourceQuota: Hard limits per namespace
+    * CPU: 2 cores max
+    * Memory: 2GB max
+    * Pods: 10 max
+    * PVCs: 5 max
+  - LimitRange: Default requests/limits for containers
+    * Default: 500m CPU, 512Mi memory
+    * Request: 250m CPU, 256Mi memory
+
+STORAGE ISOLATION:
+  - Each store has its own PVC for WordPress data
+  - Each store has its own PVC for MariaDB data
+  - Dynamic provisioning using default StorageClass
+
+3. PROVISIONING FLOW
+================================================================================
+
+STEP 1: USER CREATES STORE
+  Frontend → POST /stores {name, type}
+  ↓
+STEP 2: BACKEND VALIDATES
+  - Check store name format (lowercase, alphanumeric, hyphens)
+  - Check user quota (max 10 stores per user)
+  - Check provisioning timeout (max 10 minutes)
+  ↓
+STEP 3: ENQUEUE PROVISIONING
+  - Add to provisioning queue (max 3 concurrent)
+  - Record in audit log
+  - Update metrics
+  ↓
+STEP 4: HELM INSTALL
+  - Run: helm install <name> ./charts/woocommerce \
+         --namespace <name> --create-namespace \
+         --set wordpress.ingress.hostname=<name>.store.<domain>.nip.io
+  ↓
+STEP 5: LABEL NAMESPACE
+  - kubectl label namespace <name> app=urumi-store
+  ↓
+STEP 6: SETUP JOB RUNS
+  - Wait for MariaDB to be ready
+  - Install WordPress core
+  - Install WooCommerce plugin
+  - Install Storefront theme
+  - Create 5 dummy products
+  - Configure payment gateways (COD + Dummy)
+  ↓
+STEP 7: MONITOR READINESS
+  - Poll pod status every 3 seconds
+  - Check if all pods are Running + Ready
+  - Update store status in dashboard
+  ↓
+STEP 8: STORE READY
+  - Frontend shows "Ready" status
+  - User can click "Open Store"
+  - Store accessible at http://<name>.store.<domain>.nip.io
+
+4. CLEANUP FLOW
+================================================================================
+
+STEP 1: USER DELETES STORE
+  Frontend → DELETE /stores/<name>
+  ↓
+STEP 2: HELM UNINSTALL
+  - Run: helm uninstall <name> --namespace <name>
+  - Removes all Helm-managed resources
+  ↓
+STEP 3: DELETE PVCs
+  - Run: kubectl delete pvc --all --namespace <name>
+  - Removes persistent volumes
+  ↓
+STEP 4: DELETE NAMESPACE
+  - Run: kubectl delete namespace <name>
+  - Removes all remaining resources
+  ↓
+STEP 5: UPDATE METRICS
+  - Record deletion in metrics
+  - Update user quota
+  - Log in audit trail
+
+5. ERROR HANDLING & RECOVERY
+================================================================================
+
+IDEMPOTENCY:
+  - Check if namespace exists before provisioning
+  - Skip if already provisioned
+  - Safe to retry failed operations
+
+FAILURE HANDLING:
+  - Provisioning timeout: 10 minutes
+  - If timeout, mark as Failed
+  - User can delete and retry
+  - Errors logged in audit trail
+
+RECOVERY:
+  - If backend restarts mid-provisioning:
+    * Stores in "Provisioning" state are re-checked
+    * Status is updated based on actual pod state
+    * No duplicate resources created
+  - If Helm install fails:
+    * Namespace is cleaned up
+    * Error is recorded
+    * User can retry
+
+6. SECURITY POSTURE
+================================================================================
+
+RBAC (Role-Based Access Control):
+  - Backend service account has minimal permissions
+  - Can create/delete namespaces
+  - Can manage resources within namespaces
+  - Cannot access other namespaces
+
+SECRETS MANAGEMENT:
+  - Database passwords stored in Kubernetes Secrets
+  - Not hardcoded in source code
+  - Mounted as environment variables
+  - Future: Integrate with external secret store (Vault, AWS Secrets Manager)
+
+NETWORK SECURITY:
+  - NetworkPolicies enforce deny-by-default
+  - Only required traffic is allowed
+  - No public access to databases
+  - Ingress controller is the only entry point
+
+CONTAINER SECURITY:
+  - Bitnami images run as non-root by default
+  - Read-only root filesystem where possible
+  - No privileged containers
+  - Resource limits prevent resource exhaustion
+
+7. SCALABILITY STRATEGY
+================================================================================
+
+HORIZONTAL SCALING:
+
+Backend API:
+  - Stateless design (no session affinity needed)
+  - Can run multiple instances behind load balancer
+  - Shared Kubernetes cluster for all instances
+  - Concurrency queue prevents overwhelming cluster
+
+Provisioning:
+  - Queue limits concurrent Helm installs (max 3)
+  - Prevents cluster overload
+  - Fair queuing for multiple users
+  - Can increase limit based on cluster capacity
+
+Stores:
+  - Each store is independent
+  - Can scale cluster by adding nodes
+  - Stores automatically distributed across nodes
+  - Pod affinity rules can be added for HA
+
+VERTICAL SCALING:
+  - Increase resource limits in values-prod.yaml
+  - Increase cluster node size
+  - Increase storage size
+
+8. LOCAL VS PRODUCTION PARITY
+================================================================================
+
+LOCAL SETUP (k3d):
+  - BASE_DOMAIN: 127.0.0.1
+  - Ingress: nip.io wildcard DNS
+  - Storage: local-path provisioner
+  - Resources: Low limits (256Mi-512Mi per pod)
+  - Networking: Single node cluster
+
+PRODUCTION SETUP (k3s on VPS):
+  - BASE_DOMAIN: <VPS_IP> or custom domain
+  - Ingress: nip.io or real DNS
+  - Storage: Persistent volumes on VPS
+  - Resources: Higher limits (512Mi-1Gi per pod)
+  - Networking: Multi-node capable
+
+CONFIGURATION DIFFERENCES:
+  - values-local.yaml: Development settings
+  - values-prod.yaml: Production settings
+  - Backend reads BASE_DOMAIN from environment
+  - Same Helm chart, different values
+
+9. OBSERVABILITY & MONITORING
+================================================================================
+
+AUDIT LOGGING:
+  - All operations logged (create, delete, status changes)
+  - Includes timestamp, user, action, result
+  - Stored in-memory (can be persisted to database)
+  - Accessible via /audit/logs endpoint
+
+METRICS:
+  - Total stores created/failed/deleted
+  - Average provisioning time
+  - Success rate
+  - Active stores count
+  - Accessible via /metrics endpoint
+
+EVENTS:
+  - Kubernetes events per store
+  - Pod status changes
+  - Accessible via /stores/:name/events endpoint
+
+ACTIVITY LOG:
+  - Per-store activity timeline
+  - Displayed in dashboard
+  - Shows provisioning progress
+
+10. CONCURRENCY & QUEUING
+================================================================================
+
+PROVISIONING QUEUE:
+  - Max 3 concurrent Helm installs
+  - FIFO ordering
+  - Fair distribution across users
+  - Queue status available via /queue endpoint
+
+TASK TRACKING:
+  - Each provisioning task has unique ID
+  - Status: pending, running, completed, failed
+  - Timestamps for start/end
+  - Error messages on failure
+
+BENEFITS:
+  - Prevents cluster overload
+  - Predictable provisioning time
+  - Fair resource allocation
+  - Better error handling
+
+11. QUOTA & ABUSE PREVENTION
+================================================================================
+
+PER-USER QUOTAS:
+  - Max 10 stores per user
+  - Quota tracked by user ID (IP or header)
+  - Quota info returned in API responses
+  - Enforced at creation time
+
+PROVISIONING TIMEOUT:
+  - Max 10 minutes per store
+  - If timeout, mark as Failed
+  - User can delete and retry
+
+RATE LIMITING:
+  - Can be added at API gateway level
+  - Currently enforced via quota system
+  - Future: Add per-IP rate limiting
+
+12. DEPLOYMENT CHECKLIST
+================================================================================
+
+LOCAL DEPLOYMENT:
+  ✓ k3d cluster created
+  ✓ Ingress controller installed
+  ✓ Backend running (npm run dev)
+  ✓ Frontend running (npm run dev)
+  ✓ Dashboard accessible at http://localhost:5173
+
+PRODUCTION DEPLOYMENT:
+  ✓ VPS provisioned (Ubuntu 22.04)
+  ✓ k3s installed
+  ✓ Ingress controller installed
+  ✓ Backend running (npm start)
+  ✓ Frontend built and served
+  ✓ BASE_DOMAIN set to VPS IP
+  ✓ Firewall rules configured
+  ✓ SSL/TLS configured (optional)
+
+13. FUTURE ENHANCEMENTS
+================================================================================
+
+PHASE 2 (Gen AI):
+  - AI-powered store creation
+  - Natural language store configuration
+  - Automated product recommendations
+  - AI-driven store optimization
+
+ADDITIONAL FEATURES:
+  - Multi-region deployment
+  - Backup & restore functionality
+  - Store migration between clusters
+  - Custom domain support
+  - SSL/TLS with cert-manager
+  - Prometheus metrics export
+  - Grafana dashboards
+  - ELK stack integration
+  - Vault integration for secrets
+  - Multi-user authentication
+  - Role-based access control
+  - Store analytics
+  - Performance optimization
+
+================================================================================

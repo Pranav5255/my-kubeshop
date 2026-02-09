@@ -11,11 +11,6 @@ wordpress:
     enabled: false # We use the separate dependency
   
   externalDatabase:
-    # This must be provided dynamically or match the service name
-    # The bitnami/mariadb chart creates a service named <release>-mariadb
-    # We will override this in the backend provisioner or leave it empty to force override?
-    # No, let's just put a placeholder that clearly indicates it needs to be set, 
-    # or rely on the backend to always set it.
     host: "mariadb-placeholder" 
     user: root
     password: "root-password"
@@ -33,8 +28,12 @@ wordpress:
       mountPath: /scripts/setup.sh
       subPath: setup.sh
 
-  # Note: Setup script is now executed via a Kubernetes Job (setup-job.yaml)
-  # instead of PostStartHook for better reliability and log visibility
+  # Ingress configuration
+  ingress:
+    enabled: true
+    hostname: store.local
+    annotations:
+      kubernetes.io/ingress.class: nginx
 
 mariadb:
   enabled: true
@@ -45,12 +44,6 @@ mariadb:
     persistence:
       enabled: true
       size: 1Gi
-
-ingress:
-  enabled: true
-  hostname: store.local
-  annotations:
-    kubernetes.io/ingress.class: nginx
 
 # Security & Isolation
 networkPolicy:

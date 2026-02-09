@@ -1,0 +1,298 @@
+================================================================================
+URUMI STORE PROVISIONING - QUICK REFERENCE CARD
+================================================================================
+
+QUICK START (LOCAL)
+================================================================================
+
+1. Setup cluster:
+   $ bash scripts/setup-local.sh
+
+2. Terminal 1 - Backend:
+   $ cd backend && npm run dev
+
+3. Terminal 2 - Frontend:
+   $ cd frontend && npm run dev
+
+4. Open dashboard:
+   http://localhost:5173
+
+5. Create store:
+   - Click "New Store"
+   - Name: "test-store"
+   - Type: "WooCommerce"
+   - Click "Create Store"
+
+6. Wait 2-5 minutes for provisioning
+
+7. Access store:
+   - Click "Open Store"
+   - URL: http://test-store.store.127.0.0.1.nip.io
+
+================================================================================
+QUICK START (PRODUCTION VPS)
+================================================================================
+
+1. Provision VPS (Ubuntu 22.04, 2+ CPU, 4GB+ RAM)
+
+2. SSH into VPS:
+   $ ssh ubuntu@<VPS_IP>
+   $ sudo su -
+
+3. Install k3s:
+   $ curl -sfL https://get.k3s.io | sh -
+
+4. On local machine, configure kubectl:
+   $ scp ubuntu@<VPS_IP>:/etc/rancher/k3s/k3s.yaml ~/.kube/config-prod
+   $ sed -i 's/127.0.0.1/<VPS_IP>/g' ~/.kube/config-prod
+   $ export KUBECONFIG=~/.kube/config-prod
+
+5. Install Ingress Controller:
+   $ helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+   $ helm install ingress-nginx ingress-nginx/ingress-nginx \
+     --namespace ingress-nginx --create-namespace
+
+6. On VPS, clone and setup:
+   $ git clone <repo-url>
+   $ cd urumi/backend
+   $ npm install
+   $ export BASE_DOMAIN=<VPS_IP>
+   $ npm start
+
+7. Access dashboard:
+   http://<VPS_IP>:5173
+
+================================================================================
+COMMON COMMANDS
+================================================================================
+
+BACKEND:
+  npm run dev          # Start backend (development)
+  npm start            # Start backend (production)
+  npm run build        # Build TypeScript
+
+FRONTEND:
+  npm run dev          # Start frontend dev server
+  npm run build        # Build for production
+  npm run preview      # Preview production build
+
+KUBERNETES:
+  kubectl get nodes                    # List nodes
+  kubectl get namespaces               # List namespaces
+  kubectl get pods -n <store-name>     # List pods in store
+  kubectl logs -n <store-name> <pod>   # View pod logs
+  kubectl describe pod -n <store-name> <pod>  # Pod details
+  kubectl get ingress -n <store-name>  # View ingress
+  kubectl get pvc -n <store-name>      # View persistent volumes
+
+HELM:
+  helm list                            # List releases
+  helm list -n <store-name>            # List releases in namespace
+  helm status <store-name> -n <store-name>  # Release status
+  helm get values <store-name> -n <store-name>  # Release values
+
+TESTING:
+  bash scripts/test-e2e.sh             # Run E2E tests
+  bash scripts/verify-cleanup.sh <store-name>  # Verify cleanup
+
+================================================================================
+API ENDPOINTS
+================================================================================
+
+STORES:
+  GET    /stores                       # List all stores
+  POST   /stores                       # Create store
+  DELETE /stores/:name                 # Delete store
+
+MONITORING:
+  GET    /stores/:name/events          # Kubernetes events
+  GET    /stores/:name/activity        # Store activity log
+  GET    /audit/logs                   # Audit logs
+  GET    /metrics                      # System metrics
+  GET    /queue                        # Queue status
+  GET    /quota                        # User quota
+  GET    /health                       # Health check
+
+================================================================================
+ENVIRONMENT VARIABLES
+================================================================================
+
+Backend:
+  PORT=3001                            # Server port
+  NODE_ENV=development                 # Environment mode
+  BASE_DOMAIN=127.0.0.1                # Domain for nip.io
+  KUBECONFIG=~/.kube/config            # Kubernetes config
+
+Frontend:
+  VITE_API_URL=http://localhost:3001   # Backend URL (if needed)
+
+================================================================================
+STORE LIFECYCLE
+================================================================================
+
+1. CREATE
+   POST /stores {name, type}
+   → Status: Provisioning
+   → Helm install starts
+   → Setup job runs
+
+2. PROVISIONING
+   → Wait for pods to be Ready
+   → Setup job configures WordPress
+   → Products created
+   → Payment gateways enabled
+
+3. READY
+   → Status: Ready
+   → Store accessible at URL
+   → User can place orders
+
+4. DELETE
+   DELETE /stores/:name
+   → Helm uninstall
+   → PVCs deleted
+   → Namespace deleted
+   → All resources cleaned up
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+Store not provisioning:
+  $ kubectl get pods -n <store-name>
+  $ kubectl logs -n <store-name> -l app.kubernetes.io/name=wordpress
+  $ kubectl logs -n <store-name> -l component=setup
+
+Store URL not accessible:
+  $ kubectl get ingress -n <store-name>
+  $ kubectl describe ingress -n <store-name>
+  $ nslookup <store-name>.store.127.0.0.1.nip.io
+
+Products not showing:
+  $ kubectl exec -it <pod> -n <store-name> -- wp wc product list
+
+Payment gateways not showing:
+  $ kubectl exec -it <pod> -n <store-name> -- wp wc payment_gateway list
+
+Backend not connecting to cluster:
+  $ kubectl cluster-info
+  $ echo $KUBECONFIG
+  $ kubectl get nodes
+
+================================================================================
+PERFORMANCE TIPS
+================================================================================
+
+1. Increase concurrency:
+   Edit backend/src/queue.ts
+   Change MAX_CONCURRENT from 3 to higher value
+
+2. Increase resource limits:
+   Edit charts/woocommerce/values-prod.yaml
+   Increase CPU and memory limits
+
+3. Add more cluster nodes:
+   For k3d: k3d node create urumi-worker
+   For k3s: Add more VPS instances
+
+4. Monitor metrics:
+   $ curl http://localhost:3001/metrics | jq
+
+5. Check queue status:
+   $ curl http://localhost:3001/queue | jq
+
+================================================================================
+SECURITY CHECKLIST
+================================================================================
+
+✓ NetworkPolicies enabled
+✓ ResourceQuotas enforced
+✓ LimitRanges set
+✓ Non-root containers
+✓ Secrets not hardcoded
+✓ RBAC configured
+✓ Audit logging enabled
+✓ Quota enforcement active
+✓ Timeout protection
+✓ Error handling robust
+
+================================================================================
+DEMO SCRIPT
+================================================================================
+
+1. Show dashboard:
+   - Open http://localhost:5173
+   - Show empty stores list
+
+2. Create store:
+   - Click "New Store"
+   - Enter "demo-store"
+   - Click "Create Store"
+   - Show "Provisioning" status
+
+3. Monitor provisioning:
+   - Show metrics updating
+   - Show activity log
+   - Show queue status
+
+4. Wait for ready:
+   - Status changes to "Ready"
+   - Show provisioning time
+
+5. Access store:
+   - Click "Open Store"
+   - Show storefront
+   - Show products
+
+6. Place order:
+   - Add product to cart
+   - Checkout
+   - Place order with COD
+   - Show confirmation
+
+7. Verify order:
+   - Go to admin: /wp-admin
+   - Login: user / password
+   - Show order in WooCommerce
+
+8. Show isolation:
+   - Create another store
+   - Show both stores in list
+   - Show separate URLs
+   - Show separate databases
+
+9. Show metrics:
+   - Click "Metrics" tab
+   - Show success rate
+   - Show average time
+   - Show active stores
+
+10. Show activity:
+    - Click "Activity" tab
+    - Show all operations
+    - Show timestamps
+
+11. Delete store:
+    - Click delete icon
+    - Confirm deletion
+    - Show cleanup in logs
+
+12. Verify cleanup:
+    - bash scripts/verify-cleanup.sh demo-store
+    - Show all resources deleted
+
+================================================================================
+USEFUL LINKS
+================================================================================
+
+Kubernetes: https://kubernetes.io/
+Helm: https://helm.sh/
+k3d: https://k3d.io/
+k3s: https://k3s.io/
+Bitnami WordPress: https://hub.docker.com/r/bitnami/wordpress
+nip.io: https://nip.io/
+WooCommerce: https://woocommerce.com/
+React: https://react.dev/
+Express: https://expressjs.com/
+
+================================================================================

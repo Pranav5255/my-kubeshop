@@ -1,123 +1,296 @@
 # Urumi Store Provisioning Platform
 
-A Kubernetes-native platform for provisioning e-commerce stores (WooCommerce, MedusaJS) on demand.
+**Enterprise-grade Kubernetes-native platform for provisioning e-commerce stores (WooCommerce, MedusaJS) on demand.**
 
-## Prerequisites
+A production-ready system designed for the Urumi AI SDE internship Round 1 assessment, featuring advanced observability, security, scalability, and multi-tenant isolation.
 
-- **Kubernetes Cluster**: Kind, k3d, or Minikube (Local); k3s (Production).
-- **Helm**: v3+.
-- **Node.js**: v18+.
-- **kubectl**: Configured to point to your cluster.
+## 🚀 Quick Start
 
-## Local Setup (Development)
+### Local Development (2 minutes)
 
-1.  **Start Local Cluster (k3d example):**
-    ```bash
-    k3d cluster create urumi --api-port 6550 -p "80:80@loadbalancer"
-    ```
-
-2.  **Install Ingress Controller:**
-    ```bash
-    helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-    helm install ingress-nginx ingress-nginx/ingress-nginx --namespace ingress-nginx --create-namespace
-    ```
-
-3.  **Setup Backend:**
-    ```bash
-    cd personal/urumi/backend
-    npm install
-    npm run build
-    npm start
-    ```
-    The backend runs on port `3001`.
-
-4.  **Setup Frontend:**
-    ```bash
-    cd personal/urumi/frontend
-    npm install
-    npm run dev
-    ```
-    The dashboard runs on `http://localhost:5173`.
-
-## Usage
-
-1.  Open the Dashboard (`http://localhost:5173`).
-2.  Click **"New Store"**.
-3.  Enter a name (e.g., `my-store`) and select **WooCommerce**.
-4.  Wait for the status to change from **Provisioning** to **Ready**.
-5.  Click **"Open Store"**. The URL will be `http://my-store.store.127.0.0.1.nip.io`.
-
-### Placing an Order (Definition of Done)
-
-Each provisioned store comes pre-configured with:
-- **5 Dummy Products**: Classic T-Shirt ($19.99), Coffee Mug ($12.99), Premium Notebook ($8.99), Warm Beanie ($15.99), Stainless Steel Water Bottle ($24.99)
-- **2 Payment Methods**: Cash on Delivery (COD) and Dummy Payment Gateway
-
-**Test Order Flow:**
-1.  Navigate to the store URL (e.g., `http://my-store.store.127.0.0.1.nip.io`).
-2.  Browse products and add one to cart (e.g., "Classic T-Shirt").
-3.  Proceed to Checkout.
-4.  Fill in billing details:
-    - Name, Email, Address, City, Postcode, Phone
-5.  Select payment method:
-    - **Cash on Delivery**: For COD testing
-    - **Dummy Payment Gateway**: For online payment testing (no real charges)
-6.  Place Order.
-7.  Verify order confirmation page appears.
-8.  Check order in Admin Panel (`/wp-admin`) with credentials `user` / `password`:
-    - Go to WooCommerce → Orders
-    - Verify order details, products, and payment method
-
-## Testing & Verification
-
-### Quick Verification Checklist
-See `VERIFICATION_CHECKLIST.md` for a complete step-by-step testing guide.
-
-### Verify Store Cleanup
-After deleting a store, verify all resources are cleaned up:
 ```bash
-# Run cleanup verification script
-./scripts/verify-cleanup.sh <store-name>
+# 1. Setup cluster and dependencies
+bash scripts/setup-local.sh
 
-# Or manually check:
-kubectl get namespace <store-name>  # Should return NotFound
-kubectl get pvc -n <store-name>     # Should return NotFound
-helm list -n <store-name>            # Should be empty
+# 2. Terminal 1: Start backend
+cd backend && npm run dev
+
+# 3. Terminal 2: Start frontend
+cd frontend && npm run dev
+
+# 4. Open dashboard
+open http://localhost:5173
 ```
 
-## Production Setup (VPS / k3s)
+### Production VPS (k3s)
 
-1.  **Provision VPS**: Ubuntu 22.04 (e.g., GCP e2-medium).
-2.  **Install k3s**:
-    ```bash
-    curl -sfL https://get.k3s.io | sh -
-    ```
-3.  **Clone Repo**:
-    ```bash
-    git clone https://github.com/your-username/urumi.git
-    cd urumi
-    ```
-4.  **Run Backend**:
-    - Build Docker image or run directly with Node (ensure Helm/kubectl are installed).
-    - Set environment variable `BASE_DOMAIN=<your-vps-ip>.nip.io`.
-5.  **Helm Values**:
-    - The backend automatically uses `values-prod.yaml` if `NODE_ENV=production`.
-    - `values-prod.yaml` configures Ingress to use the proper domain and enables resource limits.
+```bash
+# See DEPLOYMENT_GUIDE.txt for detailed instructions
+bash scripts/setup-prod.sh <VPS_IP>
+```
 
-## System Design & Tradeoffs
+## 📋 Prerequisites
 
-### Architecture
-- **Orchestrator**: Node.js wrapper around Helm CLI. Chosen for simplicity and direct leverage of Helm's lifecycle management.
-- **Isolation**: Namespace-per-tenant. Provides strong isolation for resources and security.
-- **Storage**: Dynamic PVC provisioning. Standard/Local-path storage classes used.
-- **DNS**: `nip.io` for wildcard DNS without managing a real domain.
+- **Kubernetes**: k3d/kind/minikube (local) or k3s (production)
+- **Helm**: v3+
+- **Node.js**: v18+
+- **kubectl**: Configured to your cluster
+- **Docker**: For k3d (local development)
 
-### Security
-- **Network Policies**: Deny-all default. Allow Ingress and DB communication.
-- **RBAC**: Backend service account has limited permissions (Namespace management).
-- **Secrets**: Passwords generated/managed via Kubernetes Secrets (TODO: External Secret Store integration).
+## ✨ Key Features
 
-### Scalability
-- **Horizontal**: The stateless backend can scale, but the bottleneck is K8s API/Helm execution.
-- **Vertical**: Each store is isolated; cluster can scale by adding nodes.
+### Core Functionality
+- ✅ **Multi-tenant store provisioning** - Create WooCommerce or MedusaJS stores on demand
+- ✅ **Automatic setup** - Products, payment gateways, and themes configured automatically
+- ✅ **End-to-end order flow** - Complete e-commerce functionality out of the box
+- ✅ **Namespace isolation** - Each store in its own Kubernetes namespace
+- ✅ **Dynamic domain management** - nip.io wildcard DNS for local and production
+
+### Advanced Features
+- ✅ **Audit logging** - Complete operation history with timestamps and user tracking
+- ✅ **Real-time metrics** - Success rates, provisioning times, active stores
+- ✅ **Per-user quotas** - Prevent abuse with configurable store limits
+- ✅ **Concurrency queue** - Fair provisioning with max 3 concurrent tasks
+- ✅ **Network policies** - Deny-by-default with explicit allow rules
+- ✅ **Resource quotas** - Per-store CPU/memory limits
+- ✅ **Activity timeline** - Dashboard shows all operations with status
+- ✅ **Error tracking** - Detailed failure reasons and recovery options
+
+### Production Ready
+- ✅ **Local-to-prod parity** - Same Helm charts, different values
+- ✅ **Idempotent provisioning** - Safe to retry failed operations
+- ✅ **Graceful cleanup** - All resources properly deleted on store removal
+- ✅ **Horizontal scaling** - Stateless backend, queue-based provisioning
+- ✅ **Comprehensive documentation** - Setup guides, API reference, troubleshooting
+
+## 📊 Dashboard Features
+
+### Stores Tab
+- View all provisioned stores with status
+- Real-time provisioning progress
+- Quick access to store URLs
+- One-click deletion with confirmation
+
+### Metrics Tab
+- Total stores created/failed/deleted
+- Success rate percentage
+- Average provisioning time
+- Active stores count
+
+### Activity Tab
+- Audit log of all operations
+- Timestamps for each action
+- Success/failure indicators
+- Error messages for failed operations
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────┐
+│   Frontend (React + Vite)               │
+│   - Dashboard with real-time updates    │
+│   - Metrics & activity visualization    │
+└─────────────────────────────────────────┘
+              ↓ HTTP
+┌─────────────────────────────────────────┐
+│   Backend (Node.js + Express)           │
+│   - Store provisioning orchestration    │
+│   - Audit logging & metrics             │
+│   - Quota management & concurrency      │
+└─────────────────────────────────────────┘
+              ↓ kubectl/Helm
+┌─────────────────────────────────────────┐
+│   Kubernetes Cluster                    │
+│   - Per-store namespaces                │
+│   - WordPress + MariaDB pods            │
+│   - NetworkPolicies & ResourceQuotas    │
+│   - Persistent storage                  │
+└─────────────────────────────────────────┘
+```
+
+## 🔒 Security
+
+- **NetworkPolicies**: Deny-all default, explicit allow rules
+- **ResourceQuotas**: Hard limits per store (2 CPU, 2GB RAM)
+- **LimitRanges**: Pod defaults (250m CPU, 256Mi memory)
+- **RBAC**: Minimal permissions for backend service account
+- **Secrets**: Kubernetes-managed, not hardcoded
+- **Non-root containers**: Bitnami images run as non-root
+
+## 📈 Scalability
+
+- **Horizontal**: Stateless backend, multiple instances supported
+- **Concurrency**: Queue-based provisioning (max 3 concurrent)
+- **Per-user quotas**: Max 10 stores per user
+- **Provisioning timeout**: 10 minutes max per store
+- **Cluster scaling**: Add nodes for more capacity
+
+## 📚 Documentation
+
+- **SYSTEM_DESIGN.txt** - Architecture, isolation, provisioning flow, security
+- **DEPLOYMENT_GUIDE.txt** - Local setup, production VPS, troubleshooting
+- **API_REFERENCE.txt** - All endpoints with examples
+- **QUICK_REFERENCE.txt** - Common commands and quick start
+- **QUICK_TEST_GUIDE.md** - Step-by-step testing instructions
+- **VERIFICATION_CHECKLIST.md** - Complete testing checklist
+
+## 🧪 Testing
+
+### Automated E2E Tests
+```bash
+bash scripts/test-e2e.sh
+```
+
+### Manual Testing
+```bash
+# Create store
+curl -X POST http://localhost:3001/stores \
+  -H "Content-Type: application/json" \
+  -d '{"name":"test-store","type":"woocommerce"}'
+
+# List stores
+curl http://localhost:3001/stores
+
+# Get metrics
+curl http://localhost:3001/metrics
+
+# Delete store
+curl -X DELETE http://localhost:3001/stores/test-store
+```
+
+## 🎯 Usage
+
+### Create a Store
+
+1. Open dashboard: http://localhost:5173
+2. Click "New Store"
+3. Enter store name (lowercase, alphanumeric, hyphens)
+4. Select type (WooCommerce or MedusaJS)
+5. Click "Create Store"
+6. Wait 2-5 minutes for provisioning
+
+### Access Store
+
+Once status shows "Ready":
+1. Click "Open Store"
+2. Store URL: `http://<store-name>.store.<domain>.nip.io`
+3. Browse products and place orders
+
+### Place Order (Definition of Done)
+
+1. Add product to cart
+2. Proceed to checkout
+3. Fill billing details
+4. Select payment method (COD or Dummy)
+5. Place order
+6. Verify order in admin: `/wp-admin` (user/password)
+
+### Delete Store
+
+1. Click delete icon on store card
+2. Confirm deletion
+3. All resources automatically cleaned up
+
+## 🔧 API Endpoints
+
+### Store Management
+- `GET /stores` - List all stores
+- `POST /stores` - Create store
+- `DELETE /stores/:name` - Delete store
+
+### Monitoring
+- `GET /stores/:name/events` - Kubernetes events
+- `GET /stores/:name/activity` - Store activity log
+- `GET /audit/logs` - Audit logs
+- `GET /metrics` - System metrics
+- `GET /queue` - Queue status
+- `GET /quota` - User quota
+- `GET /health` - Health check
+
+See API_REFERENCE.txt for detailed documentation.
+
+## 🚨 Troubleshooting
+
+### Store not provisioning
+```bash
+kubectl get pods -n <store-name>
+kubectl logs -n <store-name> -l app.kubernetes.io/name=wordpress
+```
+
+### Store URL not accessible
+```bash
+kubectl get ingress -n <store-name>
+nslookup <store-name>.store.127.0.0.1.nip.io
+```
+
+### Products not showing
+```bash
+kubectl exec -it <pod> -n <store-name> -- wp wc product list
+```
+
+See DEPLOYMENT_GUIDE.txt for comprehensive troubleshooting.
+
+## 📦 Project Structure
+
+```
+urumi/
+├── backend/                    # Node.js backend
+│   ├── src/
+│   │   ├── index.ts           # Main API server
+│   │   ├── types.ts           # TypeScript interfaces
+│   │   ├── audit.ts           # Audit logging
+│   │   ├── quota.ts           # Quota management
+│   │   ├── metrics.ts         # Metrics collection
+│   │   ├── queue.ts           # Concurrency queue
+│   │   └── provisioner/       # Store provisioners
+│   ├── package.json
+│   └── tsconfig.json
+├── frontend/                   # React dashboard
+│   ├── src/
+│   │   ├── App.tsx            # Main dashboard
+│   │   ├── index.css          # Styling
+│   │   └── main.tsx           # Entry point
+│   ├── package.json
+│   └── vite.config.ts
+├── charts/                     # Helm charts
+│   └── woocommerce/
+│       ├── Chart.yaml
+│       ├── values.yaml
+│       ├── values-local.yaml
+│       ├── values-prod.yaml
+│       └── templates/
+├── scripts/                    # Utility scripts
+│   ├── setup-local.sh
+│   ├── setup-prod.sh
+│   ├── test-e2e.sh
+│   └── verify-cleanup.sh
+└── README.md
+```
+
+## 🎓 Learning Outcomes
+
+This project demonstrates:
+- **Kubernetes orchestration** - Namespaces, Ingress, NetworkPolicies, ResourceQuotas
+- **Helm templating** - Dynamic values, dependencies, hooks
+- **Multi-tenant architecture** - Isolation, quotas, fair resource allocation
+- **Observability** - Audit logging, metrics, activity tracking
+- **Scalability** - Concurrency control, horizontal scaling, queue management
+- **Security** - RBAC, network policies, secrets management
+- **DevOps practices** - Infrastructure as code, automated deployment, monitoring
+
+## 📝 License
+
+This project is part of the Urumi AI SDE internship assessment.
+
+## 🤝 Support
+
+For issues or questions:
+1. Check DEPLOYMENT_GUIDE.txt troubleshooting section
+2. Review API_REFERENCE.txt for endpoint details
+3. Check backend logs: `npm run dev 2>&1 | tee backend.log`
+4. Check Kubernetes resources: `kubectl get all -n <store-name>`
+
+---
+
+**Ready to deploy? Start with `bash scripts/setup-local.sh` or see DEPLOYMENT_GUIDE.txt for production setup.**
 

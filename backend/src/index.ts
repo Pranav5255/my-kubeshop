@@ -2,8 +2,15 @@ import express from 'express';
 import cors from 'cors';
 import { z } from 'zod';
 import execa from 'execa';
+import dotenv from 'dotenv';
 import { WooCommerceProvisioner } from './provisioner/woocommerce';
 import { MedusaProvisioner } from './provisioner/medusa';
+import { auditLogger } from './audit';
+import { quotaManager } from './quota';
+import { metricsCollector } from './metrics';
+import { provisioningQueue } from './queue';
+
+dotenv.config();
 
 const app = express();
 app.use(cors());
@@ -23,6 +30,12 @@ const createStoreSchema = z.object({
   type: z.enum(['woocommerce', 'medusa']),
 });
 
+// Middleware to extract user ID
+app.use((req, res, next) => {
+  (req as any).userId = quotaManager.getUserId(req);
+  next();
+});
+
 // Routes
 
 // GET /stores - List all stores
@@ -30,7 +43,10 @@ app.get('/stores', async (req, res) => {
   try {
     const wooStores = await provisioners.woocommerce.listStores();
     const medusaStores = await provisioners.medusa.listStores();
-    res.json([...wooStores, ...medusaStores]);
+    const allStores = [...wooStores, ...medusaStores].sort((a, b) => 
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+    res.json(allStores);
   } catch (error) {
     console.error('Error listing stores:', error);
     res.status(500).json({ error: 'Failed to list stores' });
@@ -41,26 +57,48 @@ app.get('/stores', async (req, res) => {
 app.post('/stores', async (req, res) => {
   try {
     const { name, type } = createStoreSchema.parse(req.body);
-    
+    const userId = (req as any).userId;
+
+    // Check quota
+    const quotaInfo = quotaManager.getQuotaInfo(userId);
+    if (!quotaInfo.canCreate) {
+      auditLogger.log('create', name, type, userId, 'failed', {}, `Quota exceeded: ${quotaInfo.storesCreated}/${quotaInfo.storesLimit}`);
+      return res.status(429).json({ 
+        error: `Quota exceeded. You have ${quotaInfo.storesCreated}/${quotaInfo.storesLimit} stores.`,
+        quota: quotaInfo
+      });
+    }
+
     const provisioner = provisioners[type];
     if (!provisioner) {
       return res.status(400).json({ error: 'Invalid store type' });
     }
 
-    // Start provisioning in background (or return promise if fast)
-    // Helm install takes time, so we should return 202 Accepted and let client poll.
-    // But for simplicity in this demo, we might await it or fire-and-forget 
-    // with status updates via polling the store status.
-    
-    // We'll start it and return immediate success.
-    provisioner.provision(name).catch(err => {
-      console.error(`Provisioning failed for ${name}:`, err);
-    });
+    // Enqueue provisioning
+    const task = provisioningQueue.enqueue(name, type);
+    quotaManager.recordStoreCreation(userId);
+    metricsCollector.recordProvisioningStart(name);
+
+    auditLogger.log('create', name, type, userId, 'success', { queueId: task.id });
+
+    // Start provisioning in background
+    provisioner.provision(name)
+      .then(() => {
+        metricsCollector.recordProvisioningSuccess(name);
+        auditLogger.log('status_change', name, type, userId, 'success', { newStatus: 'Ready' });
+      })
+      .catch(err => {
+        metricsCollector.recordProvisioningFailure(name);
+        auditLogger.log('status_change', name, type, userId, 'failed', { newStatus: 'Failed' }, err.message);
+        console.error(`Provisioning failed for ${name}:`, err);
+      });
 
     res.status(202).json({ 
       message: `Store ${name} provisioning started`,
       status: 'provisioning',
-      storeUrl: `http://${name}.store.local` // Temporary URL
+      storeUrl: `http://${name}.store.${process.env.BASE_DOMAIN || '127.0.0.1'}.nip.io`,
+      queuePosition: provisioningQueue.getQueue().length,
+      quota: quotaInfo
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -75,15 +113,23 @@ app.post('/stores', async (req, res) => {
 // DELETE /stores/:name - Delete a store
 app.delete('/stores/:name', async (req, res) => {
   const { name } = req.params;
+  const userId = (req as any).userId;
+
   try {
     // Try to delete from both
     await Promise.all([
       provisioners.woocommerce.deprovision(name),
       provisioners.medusa.deprovision(name)
     ]);
+
+    quotaManager.recordStoreDeletion(userId);
+    metricsCollector.recordStoreDeletion();
+    auditLogger.log('delete', name, 'unknown', userId, 'success');
+
     res.json({ message: `Store ${name} deleted` });
   } catch (error) {
     console.error(`Error deleting store ${name}:`, error);
+    auditLogger.log('delete', name, 'unknown', userId, 'failed', {}, error instanceof Error ? error.message : 'Unknown error');
     res.status(500).json({ error: 'Failed to delete store' });
   }
 });
@@ -113,7 +159,61 @@ app.get('/stores/:name/events', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// GET /stores/:name/activity - Get store activity log
+app.get('/stores/:name/activity', (req, res) => {
+  const { name } = req.params;
+  const logs = auditLogger.getLogsForStore(name);
+  res.json(logs);
 });
 
+// GET /audit/logs - Get all audit logs (recent)
+app.get('/audit/logs', (req, res) => {
+  const limit = parseInt(req.query.limit as string) || 50;
+  const logs = auditLogger.getRecentLogs(limit);
+  res.json(logs);
+});
+
+// GET /quota - Get current user's quota
+app.get('/quota', (req, res) => {
+  const userId = (req as any).userId;
+  const quotaInfo = quotaManager.getQuotaInfo(userId);
+  res.json(quotaInfo);
+});
+
+// GET /metrics - Get system metrics
+app.get('/metrics', async (req, res) => {
+  try {
+    const wooStores = await provisioners.woocommerce.listStores();
+    const medusaStores = await provisioners.medusa.listStores();
+    const activeStores = [...wooStores, ...medusaStores].filter(s => s.status === 'Ready').length;
+    
+    const metrics = metricsCollector.getMetrics(activeStores);
+    res.json(metrics);
+  } catch (error) {
+    console.error('Error fetching metrics:', error);
+    res.status(500).json({ error: 'Failed to fetch metrics' });
+  }
+});
+
+// GET /queue - Get provisioning queue status
+app.get('/queue', (req, res) => {
+  const queue = provisioningQueue.getQueue();
+  const runningCount = provisioningQueue.getRunningCount();
+  res.json({
+    queue,
+    runningCount,
+    maxConcurrent: 3,
+    canAcceptMore: provisioningQueue.canAcceptMore()
+  });
+});
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log(`BASE_DOMAIN: ${process.env.BASE_DOMAIN || '127.0.0.1'}`);
+  console.log(`NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
+});

@@ -1,39 +1,67 @@
 import { IStoreProvisioner, StoreStatus } from '../types';
 import execa from 'execa';
 import * as k8s from '@kubernetes/client-node';
+import * as path from 'path';
 
 export class WooCommerceProvisioner implements IStoreProvisioner {
   private k8sApi: k8s.CoreV1Api;
+  private baseDomain: string;
+  private storeMetadata: Map<string, { createdAt: string; type: string; startTime: number }> = new Map();
 
   constructor() {
     const kc = new k8s.KubeConfig();
     kc.loadFromDefault();
     this.k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+    this.baseDomain = process.env.BASE_DOMAIN || '127.0.0.1';
   }
 
   async provision(name: string): Promise<void> {
     console.log(`Provisioning WooCommerce store: ${name}`);
+    const startTime = Date.now();
     
     try {
-      // 1. Helm Install
+      // Check if store already exists (idempotency)
+      try {
+        await this.k8sApi.readNamespace(name);
+        console.log(`Store ${name} already exists, skipping provisioning`);
+        return;
+      } catch (e) {
+        // Namespace doesn't exist, proceed with provisioning
+      }
+
+      // 1. Helm Install with environment-based domain
+      const hostname = `${name}.store.${this.baseDomain}.nip.io`;
+      const chartPath = path.resolve(__dirname, '../../charts/woocommerce');
+      
       await execa('helm', [
         'install',
         name,
-        '../charts/woocommerce', // Correct path relative to backend root
+        chartPath,
         '--create-namespace',
         '--namespace',
         name,
         '--set',
         `wordpress.ingress.enabled=true`,
         '--set',
-        `wordpress.ingress.hostname=${name}.store.127.0.0.1.nip.io`,
+        `wordpress.ingress.hostname=${hostname}`,
         '--set',
-        `wordpress.externalDatabase.host=${name}-mariadb`
+        `wordpress.externalDatabase.host=${name}-mariadb`,
+        '--set',
+        `wordpress.wordpressUsername=user`,
+        '--set',
+        `wordpress.wordpressPassword=password`,
       ]);
       console.log(`Helm install triggered for ${name}`);
 
       // 2. Label Namespace for discovery
       await execa('kubectl', ['label', 'namespace', name, 'app=urumi-store', '--overwrite']);
+
+      // 3. Store metadata
+      this.storeMetadata.set(name, {
+        createdAt: new Date().toISOString(),
+        type: 'woocommerce',
+        startTime,
+      });
 
     } catch (error) {
       console.error(`Provisioning failed for ${name}:`, error);
@@ -57,7 +85,7 @@ export class WooCommerceProvisioner implements IStoreProvisioner {
         const name = ns.metadata?.name;
         if (!name) continue;
 
-        // Get status for each (could be slow, but fine for MVP)
+        // Get status for each
         const status = await this.getStatus(name);
         stores.push(status);
       }
@@ -71,6 +99,7 @@ export class WooCommerceProvisioner implements IStoreProvisioner {
   async getStatus(name: string): Promise<StoreStatus> {
     try {
       const ns = await this.k8sApi.readNamespace(name);
+      const metadata = this.storeMetadata.get(name);
       
       const pods = await this.k8sApi.listNamespacedPod(name);
       const isReady = pods.body.items.length > 0 && pods.body.items.every(pod => 
@@ -78,18 +107,26 @@ export class WooCommerceProvisioner implements IStoreProvisioner {
         pod.status?.conditions?.some(c => c.type === 'Ready' && c.status === 'True')
       );
 
+      const createdAt = metadata?.createdAt || ns.body.metadata?.creationTimestamp?.toISOString() || new Date().toISOString();
+      const duration = metadata ? Date.now() - metadata.startTime : undefined;
+
       return {
         name,
         status: isReady ? 'Ready' : 'Provisioning',
-        url: `http://${name}.store.127.0.0.1.nip.io`,
-        createdAt: ns.body.metadata?.creationTimestamp?.toISOString() || new Date().toISOString()
+        url: `http://${name}.store.${this.baseDomain}.nip.io`,
+        createdAt,
+        type: 'woocommerce',
+        duration,
       };
     } catch (error) {
+      console.error(`Error getting status for ${name}:`, error);
       return {
         name,
         status: 'Failed',
         url: '',
-        createdAt: ''
+        createdAt: new Date().toISOString(),
+        type: 'woocommerce',
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   }
@@ -97,12 +134,41 @@ export class WooCommerceProvisioner implements IStoreProvisioner {
   async deprovision(name: string): Promise<void> {
     console.log(`Deprovisioning store: ${name}`);
     try {
-      await execa('helm', ['uninstall', name, '--namespace', name]);
-      await execa('kubectl', ['delete', 'pvc', '--all', '--namespace', name]);
-      await execa('kubectl', ['delete', 'namespace', name]);
+      // Check if namespace exists first
+      try {
+        await this.k8sApi.readNamespace(name);
+      } catch (e) {
+        console.log(`Namespace ${name} does not exist, skipping deprovision`);
+        return;
+      }
+
+      // 1. Helm uninstall
+      try {
+        await execa('helm', ['uninstall', name, '--namespace', name]);
+      } catch (e) {
+        console.warn(`Helm uninstall failed for ${name}, continuing with cleanup:`, e);
+      }
+
+      // 2. Delete PVCs
+      try {
+        await execa('kubectl', ['delete', 'pvc', '--all', '--namespace', name, '--ignore-not-found']);
+      } catch (e) {
+        console.warn(`PVC deletion failed for ${name}:`, e);
+      }
+
+      // 3. Delete namespace
+      try {
+        await execa('kubectl', ['delete', 'namespace', name, '--ignore-not-found']);
+      } catch (e) {
+        console.warn(`Namespace deletion failed for ${name}:`, e);
+      }
+
+      // 4. Clean up metadata
+      this.storeMetadata.delete(name);
       console.log(`Store ${name} resources cleaned up.`);
     } catch (error) {
       console.error(`Deprovisioning failed for ${name}:`, error);
+      throw error;
     }
   }
 }

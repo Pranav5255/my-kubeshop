@@ -1,0 +1,448 @@
+================================================================================
+URUMI STORE PROVISIONING - API REFERENCE
+================================================================================
+
+BASE URL: http://localhost:3001 (local) or http://<VPS_IP>:3001 (production)
+
+================================================================================
+STORE MANAGEMENT
+================================================================================
+
+GET /stores
+-----------
+Description: List all stores
+Method: GET
+Authentication: None
+Query Parameters: None
+
+Response (200 OK):
+[
+  {
+    "name": "my-store-1",
+    "status": "Ready",
+    "url": "http://my-store-1.store.127.0.0.1.nip.io",
+    "createdAt": "2024-02-09T10:30:00Z",
+    "type": "woocommerce",
+    "duration": 120000
+  },
+  {
+    "name": "my-store-2",
+    "status": "Provisioning",
+    "url": "http://my-store-2.store.127.0.0.1.nip.io",
+    "createdAt": "2024-02-09T10:35:00Z",
+    "type": "woocommerce"
+  }
+]
+
+Example:
+  $ curl http://localhost:3001/stores
+
+
+POST /stores
+------------
+Description: Create a new store
+Method: POST
+Authentication: None
+Content-Type: application/json
+
+Request Body:
+{
+  "name": "my-store-1",
+  "type": "woocommerce"
+}
+
+Parameters:
+  - name (string, required): Store name (3-20 chars, lowercase, alphanumeric + hyphens)
+  - type (string, required): Store type ("woocommerce" or "medusa")
+
+Response (202 Accepted):
+{
+  "message": "Store my-store-1 provisioning started",
+  "status": "provisioning",
+  "storeUrl": "http://my-store-1.store.127.0.0.1.nip.io",
+  "queuePosition": 1,
+  "quota": {
+    "userId": "192.168.1.1",
+    "storesCreated": 1,
+    "storesLimit": 10,
+    "canCreate": true
+  }
+}
+
+Error Response (400 Bad Request):
+{
+  "error": [
+    {
+      "code": "too_small",
+      "minimum": 3,
+      "type": "string",
+      "message": "String must contain at least 3 character(s)",
+      "path": ["name"]
+    }
+  ]
+}
+
+Error Response (429 Too Many Requests):
+{
+  "error": "Quota exceeded. You have 10/10 stores.",
+  "quota": {
+    "userId": "192.168.1.1",
+    "storesCreated": 10,
+    "storesLimit": 10,
+    "canCreate": false
+  }
+}
+
+Example:
+  $ curl -X POST http://localhost:3001/stores \
+    -H "Content-Type: application/json" \
+    -d '{"name":"my-store-1","type":"woocommerce"}'
+
+
+DELETE /stores/:name
+--------------------
+Description: Delete a store and clean up all resources
+Method: DELETE
+Authentication: None
+Path Parameters:
+  - name (string): Store name
+
+Response (200 OK):
+{
+  "message": "Store my-store-1 deleted"
+}
+
+Error Response (500 Internal Server Error):
+{
+  "error": "Failed to delete store"
+}
+
+Example:
+  $ curl -X DELETE http://localhost:3001/stores/my-store-1
+
+
+================================================================================
+STORE DETAILS & MONITORING
+================================================================================
+
+GET /stores/:name/events
+------------------------
+Description: Get Kubernetes events for a store
+Method: GET
+Authentication: None
+Path Parameters:
+  - name (string): Store name
+
+Response (200 OK):
+[
+  {
+    "message": "Successfully assigned pod to node-1",
+    "reason": "Scheduled",
+    "type": "Normal",
+    "time": "2024-02-09T10:30:15Z"
+  },
+  {
+    "message": "Container image already present on machine",
+    "reason": "Pulled",
+    "type": "Normal",
+    "time": "2024-02-09T10:30:20Z"
+  }
+]
+
+Example:
+  $ curl http://localhost:3001/stores/my-store-1/events
+
+
+GET /stores/:name/activity
+---------------------------
+Description: Get activity log for a store
+Method: GET
+Authentication: None
+Path Parameters:
+  - name (string): Store name
+
+Response (200 OK):
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "timestamp": "2024-02-09T10:30:00Z",
+    "action": "create",
+    "storeName": "my-store-1",
+    "storeType": "woocommerce",
+    "userId": "192.168.1.1",
+    "status": "success",
+    "details": {
+      "queueId": "my-store-1-1707470400000"
+    }
+  },
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440001",
+    "timestamp": "2024-02-09T10:32:00Z",
+    "action": "status_change",
+    "storeName": "my-store-1",
+    "storeType": "woocommerce",
+    "userId": "192.168.1.1",
+    "status": "success",
+    "details": {
+      "newStatus": "Ready"
+    }
+  }
+]
+
+Example:
+  $ curl http://localhost:3001/stores/my-store-1/activity
+
+
+================================================================================
+AUDIT & LOGGING
+================================================================================
+
+GET /audit/logs
+---------------
+Description: Get recent audit logs
+Method: GET
+Authentication: None
+Query Parameters:
+  - limit (integer, optional): Number of logs to return (default: 50)
+
+Response (200 OK):
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "timestamp": "2024-02-09T10:30:00Z",
+    "action": "create",
+    "storeName": "my-store-1",
+    "storeType": "woocommerce",
+    "userId": "192.168.1.1",
+    "status": "success",
+    "details": {}
+  },
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440001",
+    "timestamp": "2024-02-09T10:35:00Z",
+    "action": "create",
+    "storeName": "my-store-2",
+    "storeType": "woocommerce",
+    "userId": "192.168.1.1",
+    "status": "success",
+    "details": {}
+  }
+]
+
+Example:
+  $ curl "http://localhost:3001/audit/logs?limit=20"
+
+
+================================================================================
+QUOTA & LIMITS
+================================================================================
+
+GET /quota
+----------
+Description: Get current user's quota information
+Method: GET
+Authentication: None
+
+Response (200 OK):
+{
+  "userId": "192.168.1.1",
+  "storesCreated": 2,
+  "storesLimit": 10,
+  "canCreate": true
+}
+
+Example:
+  $ curl http://localhost:3001/quota
+
+
+================================================================================
+METRICS & ANALYTICS
+================================================================================
+
+GET /metrics
+------------
+Description: Get system-wide metrics
+Method: GET
+Authentication: None
+
+Response (200 OK):
+{
+  "totalStoresCreated": 15,
+  "totalStoresFailed": 2,
+  "totalStoresDeleted": 5,
+  "averageProvisioningTime": 120,
+  "successRate": 88.24,
+  "activeStores": 8
+}
+
+Fields:
+  - totalStoresCreated (number): Total stores successfully created
+  - totalStoresFailed (number): Total stores that failed to provision
+  - totalStoresDeleted (number): Total stores deleted
+  - averageProvisioningTime (number): Average provisioning time in seconds
+  - successRate (number): Success rate as percentage (0-100)
+  - activeStores (number): Currently active (Ready) stores
+
+Example:
+  $ curl http://localhost:3001/metrics
+
+
+================================================================================
+QUEUE & CONCURRENCY
+================================================================================
+
+GET /queue
+----------
+Description: Get provisioning queue status
+Method: GET
+Authentication: None
+
+Response (200 OK):
+{
+  "queue": [
+    {
+      "id": "my-store-3-1707470400000",
+      "storeName": "my-store-3",
+      "type": "woocommerce",
+      "status": "running",
+      "createdAt": "2024-02-09T10:35:00Z",
+      "startedAt": "2024-02-09T10:35:05Z"
+    },
+    {
+      "id": "my-store-4-1707470410000",
+      "storeName": "my-store-4",
+      "type": "woocommerce",
+      "status": "pending",
+      "createdAt": "2024-02-09T10:35:10Z"
+    }
+  ],
+  "runningCount": 1,
+  "maxConcurrent": 3,
+  "canAcceptMore": true
+}
+
+Fields:
+  - queue (array): List of queued tasks
+  - runningCount (number): Number of currently running provisioning tasks
+  - maxConcurrent (number): Maximum concurrent provisioning tasks
+  - canAcceptMore (boolean): Whether new provisioning can start immediately
+
+Example:
+  $ curl http://localhost:3001/queue
+
+
+================================================================================
+HEALTH & STATUS
+================================================================================
+
+GET /health
+-----------
+Description: Health check endpoint
+Method: GET
+Authentication: None
+
+Response (200 OK):
+{
+  "status": "ok",
+  "timestamp": "2024-02-09T10:30:00Z"
+}
+
+Example:
+  $ curl http://localhost:3001/health
+
+
+================================================================================
+ERROR RESPONSES
+================================================================================
+
+All error responses follow this format:
+
+{
+  "error": "Error message describing what went wrong"
+}
+
+Common HTTP Status Codes:
+  - 200 OK: Request successful
+  - 202 Accepted: Request accepted for processing (async)
+  - 400 Bad Request: Invalid request parameters
+  - 429 Too Many Requests: Quota exceeded or rate limited
+  - 500 Internal Server Error: Server error
+
+================================================================================
+AUTHENTICATION & HEADERS
+================================================================================
+
+User Identification:
+  - By default, users are identified by IP address
+  - Can be overridden with X-User-Id header:
+    $ curl -H "X-User-Id: user-123" http://localhost:3001/stores
+
+CORS:
+  - All endpoints support CORS
+  - Frontend can make requests from any origin
+
+Content-Type:
+  - All requests should use: Content-Type: application/json
+  - All responses are JSON
+
+================================================================================
+RATE LIMITING & QUOTAS
+================================================================================
+
+Per-User Limits:
+  - Max 10 stores per user
+  - Max 10 minutes provisioning time per store
+  - Max 3 concurrent provisioning tasks
+
+Quota Enforcement:
+  - Checked at store creation time
+  - Returns 429 if quota exceeded
+  - Quota info included in responses
+
+================================================================================
+EXAMPLES
+================================================================================
+
+EXAMPLE 1: Create and monitor a store
+
+1. Create store:
+   $ curl -X POST http://localhost:3001/stores \
+     -H "Content-Type: application/json" \
+     -d '{"name":"demo-store","type":"woocommerce"}'
+
+2. Check status (repeat every 3 seconds):
+   $ curl http://localhost:3001/stores | jq '.[] | select(.name=="demo-store")'
+
+3. When status is "Ready", open store:
+   $ open http://demo-store.store.127.0.0.1.nip.io
+
+4. Delete store:
+   $ curl -X DELETE http://localhost:3001/stores/demo-store
+
+
+EXAMPLE 2: Monitor system metrics
+
+1. Get metrics:
+   $ curl http://localhost:3001/metrics | jq
+
+2. Get queue status:
+   $ curl http://localhost:3001/queue | jq
+
+3. Get audit logs:
+   $ curl http://localhost:3001/audit/logs | jq
+
+
+EXAMPLE 3: Check user quota
+
+1. Get quota:
+   $ curl http://localhost:3001/quota | jq
+
+2. Create store if quota allows:
+   $ QUOTA=$(curl -s http://localhost:3001/quota | jq '.canCreate')
+   $ if [ "$QUOTA" = "true" ]; then
+       curl -X POST http://localhost:3001/stores \
+         -H "Content-Type: application/json" \
+         -d '{"name":"new-store","type":"woocommerce"}'
+     fi
+
+================================================================================
