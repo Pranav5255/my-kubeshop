@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-setup
+  namespace: pran-store-2
+spec:
+  containers:
+  - name: debug
+    image: bitnami/wordpress:latest
+    command: ["/bin/bash", "-c", "sleep 3600"]
+    env:
+      - name: MARIADB_HOST
+        value: "pran-store-2-mariadb"
+      - name: WORDPRESS_DATABASE_USER
+        value: "root"
+      - name: WORDPRESS_DATABASE_PASSWORD_FILE
+        value: "/secrets/mariadb-root-password"
+    volumeMounts:
+      - name: setup-script
+        mountPath: /scripts
+      - name: wordpress-data
+        mountPath: /bitnami/wordpress
+        subPath: wordpress
+      - name: mariadb-secret
+        mountPath: /secrets
+        readOnly: true
+  volumes:
+    - name: setup-script
+      configMap:
+        name: wp-setup
+        defaultMode: 0755
+    - name: wordpress-data
+      persistentVolumeClaim:
+        claimName: pran-store-2-wordpress
+    - name: mariadb-secret
+      secret:
+        secretName: pran-store-2-mariadb

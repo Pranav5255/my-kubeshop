@@ -14,6 +14,10 @@ export class MedusaProvisioner implements IStoreProvisioner {
       name,
       status: 'Provisioning',
       url: `http://${name}.medusa.${this.baseDomain}.nip.io`,
+      adminUrl: `http://${name}.medusa.${this.baseDomain}.nip.io/app`,
+      shopUrl: `http://${name}.medusa.${this.baseDomain}.nip.io`,
+      adminUsername: 'admin',
+      adminPassword: 'admin',
       createdAt: new Date().toISOString(),
       type: 'medusa',
     });
@@ -32,7 +36,7 @@ export class MedusaProvisioner implements IStoreProvisioner {
   async getStatus(name: string): Promise<StoreStatus> {
     const store = this.stores.get(name);
     if (!store) {
-        throw new Error('Store not found');
+      throw new Error('Store not found');
     }
     return store;
   }

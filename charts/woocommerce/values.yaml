@@ -16,7 +16,28 @@ wordpress:
     password: "root-password"
     database: bitnami_wordpress
 
-  # Mount the setup script
+  # Lifecycle hook to run setup inside WordPress container (runs in background)
+  lifecycleHooks:
+    postStart:
+      exec:
+        command:
+          - /bin/bash
+          - -c
+          - |
+            # Run setup script in background to avoid blocking container startup
+            nohup /bin/bash -c '
+              # Wait for WordPress to be fully initialized
+              until [ -f /opt/bitnami/wordpress/wp-config.php ]; do
+                echo "Waiting for WordPress initialization..." >> /tmp/setup.log 2>&1
+                sleep 2
+              done
+              # Run setup script
+              if [ -f /scripts/setup.sh ]; then
+                /bin/bash /scripts/setup.sh >> /tmp/setup.log 2>&1
+              fi
+            ' > /dev/null 2>&1 &
+
+  # Mount the setup script into WordPress container
   extraVolumes:
     - name: setup-script
       configMap:
@@ -25,15 +46,20 @@ wordpress:
 
   extraVolumeMounts:
     - name: setup-script
-      mountPath: /scripts/setup.sh
-      subPath: setup.sh
+      mountPath: /scripts
 
-  # Ingress configuration
   ingress:
     enabled: true
     hostname: store.local
-    annotations:
-      kubernetes.io/ingress.class: nginx
+    ingressClassName: traefik
+    annotations: {}
+
+  # Note: WordPress URLs are configured via the postStart lifecycle hook
+  # The setup script runs inside the WordPress container and configures:
+  # - wp-config.php hostname for WP_CLI
+  # - .htaccess for permalinks
+  # - WordPress and WooCommerce installation
+  # - Sample products and payment gateways
 
 mariadb:
   enabled: true
@@ -64,5 +90,5 @@ limitRange:
     cpu: "500m"
     memory: "512Mi"
   defaultRequest:
-    cpu: "250m"
+    cpu: "100m"
     memory: "256Mi"

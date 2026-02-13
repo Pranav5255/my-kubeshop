@@ -7,16 +7,9 @@ export interface StoreStatus {
   adminUsername: string;
   adminPassword: string;
   createdAt: string;
-  error?: string;
-  duration?: number; // milliseconds
   type: 'woocommerce' | 'medusa';
-}
-
-export interface IStoreProvisioner {
-  provision(name: string): Promise<void>;
-  getStatus(name: string): Promise<StoreStatus>;
-  deprovision(name: string): Promise<void>;
-  listStores(): Promise<StoreStatus[]>;
+  error?: string;
+  duration?: number;
 }
 
 export interface QuotaInfo {
@@ -24,18 +17,6 @@ export interface QuotaInfo {
   storesCreated: number;
   storesLimit: number;
   canCreate: boolean;
-}
-
-export interface AuditLog {
-  id: string;
-  timestamp: string;
-  action: 'create' | 'delete' | 'status_change';
-  storeName: string;
-  storeType: string;
-  userId: string;
-  details: Record<string, any>;
-  status: 'success' | 'failed';
-  error?: string;
 }
 
 export interface Metrics {
@@ -47,3 +28,13 @@ export interface Metrics {
   activeStores: number;
 }
 
+export interface AuditLog {
+  id: string;
+  timestamp: string;
+  action: 'create' | 'delete' | 'status_change';
+  storeName: string;
+  storeType: string;
+  userId: string;
+  status: 'success' | 'failed';
+  error?: string;
+}

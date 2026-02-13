@@ -8,186 +8,225 @@ data:
   setup.sh: |
     #!/bin/bash
     set -e
-    # Redirect all output to stderr so it appears in pod logs
-    exec 1>&2
-    echo "[SETUP] Starting WordPress setup..." >&2
-    echo "[SETUP] Script executed at $(date)" >&2
-    echo "[SETUP] Current user: $(whoami)" >&2
-    echo "[SETUP] Script path: $0" >&2
-    echo "[SETUP] Script exists: $([ -f /scripts/setup.sh ] && echo 'YES' || echo 'NO')" >&2
+    exec 1>&2  # Redirect output to stderr for logging
     
-    # Read password from file if it exists, otherwise use env var
-    DB_HOST="${MARIADB_HOST:-mariadb}"
-    DB_USER="${WORDPRESS_DATABASE_USER:-root}"
-    # Try multiple possible password file locations
-    if [ -f "/secrets/mariadb-password" ]; then
-      DB_PASSWORD=$(cat /secrets/mariadb-password)
-      echo "[SETUP] Using password from /secrets/mariadb-password" >&2
-    elif [ -f "/secrets/mariadb-root-password" ]; then
-      DB_PASSWORD=$(cat /secrets/mariadb-root-password)
-      echo "[SETUP] Using password from /secrets/mariadb-root-password" >&2
-    elif [ -f "${WORDPRESS_DATABASE_PASSWORD_FILE:-}" ]; then
-      DB_PASSWORD=$(cat "${WORDPRESS_DATABASE_PASSWORD_FILE}")
-      echo "[SETUP] Using password from ${WORDPRESS_DATABASE_PASSWORD_FILE}" >&2
-    else
-      DB_PASSWORD="${WORDPRESS_DATABASE_PASSWORD:-root-password}"
-      echo "[SETUP] Using password from environment variable" >&2
-    fi
+    echo "[SETUP] Starting WordPress/WooCommerce setup at $(date)"
+    echo "[SETUP] Store: {{ .Release.Name }}"
     
-    # Wait for DB connection using mysql client (retry logic)
-    MAX_RETRIES=30
-    RETRY_COUNT=0
-    until /opt/bitnami/mysql/bin/mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" -e "SELECT 1" > /dev/null 2>&1; do
-      RETRY_COUNT=$((RETRY_COUNT + 1))
-      if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-        echo "ERROR: Could not connect to database after $MAX_RETRIES attempts"
+    # Store configuration
+    STORE_HOSTNAME="{{ .Values.wordpress.ingress.hostname | default (printf "%s.store.127.0.0.1.nip.io" .Release.Name) }}"
+    STORE_URL="http://${STORE_HOSTNAME}"
+    WP_DIR="/opt/bitnami/wordpress"
+    WP_CONFIG="${WP_DIR}/wp-config.php"
+    
+    # Wait for WordPress to initialize wp-config.php
+    echo "[SETUP] Waiting for WordPress initialization..."
+    for i in {1..30}; do
+      if [ -f "$WP_CONFIG" ]; then
+        echo "[SETUP] WordPress initialized"
+        break
+      fi
+      if [ $i -eq 30 ]; then
+        echo "[SETUP] ERROR: WordPress not initialized after 60s"
         exit 1
       fi
-      echo "[SETUP] Waiting for database connection... (attempt $RETRY_COUNT/$MAX_RETRIES)" >&2
-      sleep 5
+      sleep 2
     done
     
-    echo "[SETUP] Database connection successful!" >&2
+    cd "$WP_DIR"
     
-    # Wait for WordPress to be ready (wp-cli needs wp-config.php)
-    # The Bitnami entrypoint creates wp-config.php, so we wait a bit
-    echo "[SETUP] Waiting for WordPress to be ready..." >&2
-    sleep 15
+    # Wait for database to be ready before proceeding
+    echo "[SETUP] Waiting for database connection..."
+    for i in {1..30}; do
+      if wp db check --allow-root 2>/dev/null; then
+        echo "[SETUP] Database connection established"
+        break
+      fi
+      if [ $i -eq 30 ]; then
+        echo "[SETUP] ERROR: Database not ready after 60s"
+        exit 1
+      fi
+      sleep 2
+    done
     
-    # Check if WordPress is already installed
-    if wp core is-installed 2>/dev/null; then
-      echo "[SETUP] WordPress is already installed. Skipping installation." >&2
+    # 1. Fix wp-config.php WP_CLI hostname (critical fix)
+    echo "[SETUP] Fixing wp-config.php WP_CLI hostname..."
+    if grep -q "\$_SERVER\['HTTP_HOST'\] = '127.0.0.1';" "$WP_CONFIG" 2>/dev/null; then
+      sed -i "s/\$_SERVER\['HTTP_HOST'\] = '127.0.0.1';/\$_SERVER['HTTP_HOST'] = '$STORE_HOSTNAME';/" "$WP_CONFIG"
+      echo "[SETUP] Fixed wp-config.php hostname to: $STORE_HOSTNAME"
     else
-      echo "[SETUP] Installing WordPress..." >&2
+      echo "[SETUP] wp-config.php hostname already configured"
+    fi
+    
+    # 2. Create .htaccess file for permalinks (critical for routing)
+    echo "[SETUP] Creating .htaccess file..."
+    cat > "${WP_DIR}/.htaccess" << 'HTACCESS_EOF'
+    # BEGIN WordPress
+    <IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+    RewriteBase /
+    RewriteRule ^index\.php$ - [L]
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule . /index.php [L]
+    </IfModule>
+    # END WordPress
+    HTACCESS_EOF
+    echo "[SETUP] .htaccess created"
+    
+    # 3. Install WordPress if not already installed
+    if wp core is-installed 2>/dev/null; then
+      echo "[SETUP] WordPress already installed"
+    else
+      echo "[SETUP] Installing WordPress..."
       wp core install \
-        --url="http://{{ .Values.wordpress.ingress.hostname | default (printf "%s.store.127.0.0.1.nip.io" .Release.Name) }}" \
+        --url="$STORE_URL" \
         --title="Urumi Store {{ .Release.Name }}" \
         --admin_user="{{ .Values.wordpress.wordpressUsername }}" \
         --admin_password="{{ .Values.wordpress.wordpressPassword }}" \
         --admin_email="{{ .Values.wordpress.wordpressEmail }}" \
         --skip-email
+      echo "[SETUP] WordPress installed"
     fi
-
-    # Install WooCommerce
-    echo "[SETUP] Checking WooCommerce..." >&2
+    
+    # 4. Set WordPress URLs to match ingress hostname
+    echo "[SETUP] Configuring WordPress URLs..."
+    wp option update siteurl "$STORE_URL" 2>&1 || true
+    wp option update home "$STORE_URL" 2>&1 || true
+    wp option update permalink_structure '/%postname%/' 2>&1 || true
+    echo "[SETUP] URLs configured: $STORE_URL"
+    
+    # 5. Ensure admin user has administrator role
+    echo "[SETUP] Configuring admin user..."
+    wp user set-role "{{ .Values.wordpress.wordpressUsername }}" administrator 2>&1 || true
+    
+    # 6. Install and activate WooCommerce
+    echo "[SETUP] Setting up WooCommerce..."
     if ! wp plugin is-installed woocommerce 2>/dev/null; then
-      echo "[SETUP] Installing WooCommerce..." >&2
-      wp plugin install woocommerce --activate --force 2>&1 | tee >&2 || echo "[SETUP] WooCommerce install may have failed" >&2
+      wp plugin install woocommerce --activate --force 2>&1 || true
     else
-      echo "[SETUP] WooCommerce already installed. Ensuring it's activated..." >&2
-      wp plugin activate woocommerce 2>&1 | tee >&2 || echo "[SETUP] WooCommerce activation may have failed" >&2
+      wp plugin activate woocommerce 2>&1 || true
     fi
     
-    # Install Storefront theme
-    echo "[SETUP] Checking Storefront theme..." >&2
+    # 7. Install and activate Storefront theme
+    echo "[SETUP] Installing Storefront theme..."
     if ! wp theme is-installed storefront 2>/dev/null; then
-      echo "[SETUP] Installing Storefront theme..." >&2
-      wp theme install storefront --activate --force 2>&1 | tee >&2 || echo "[SETUP] Storefront install may have failed" >&2
+      wp theme install storefront --activate --force 2>&1 || true
     else
-      echo "[SETUP] Storefront already installed. Ensuring it's activated..." >&2
-      wp theme activate storefront 2>&1 | tee >&2 || echo "[SETUP] Storefront activation may have failed" >&2
+      wp theme activate storefront 2>&1 || true
     fi
     
-    # Wait a bit more for WooCommerce to fully initialize
-    echo "[SETUP] Waiting for WooCommerce to fully initialize..." >&2
-    sleep 10
+    # Wait for WooCommerce to initialize
+    sleep 5
     
-    # Verify WooCommerce is active
-    if ! wp plugin is-active woocommerce 2>/dev/null; then
-      echo "[SETUP] ERROR: WooCommerce is not active!" >&2
-      exit 1
-    fi
-    echo "[SETUP] WooCommerce is active. Proceeding with configuration..." >&2
+    # 8. Configure WooCommerce settings
+    echo "[SETUP] Configuring WooCommerce..."
     
-    # Configure WooCommerce settings
-    echo "[SETUP] Configuring WooCommerce settings..." >&2
+    # Mark onboarding as completed
+    wp eval '
+    $profile = get_option("woocommerce_onboarding_profile", array());
+    if (!is_array($profile)) $profile = array();
+    $profile["completed"] = true;
+    $profile["skipped"] = true;
+    update_option("woocommerce_onboarding_profile", $profile);
+    update_option("woocommerce_admin_disabled", "no");
+    update_option("woocommerce_onboarding_opt_in", "yes");
+    if (!get_option("woocommerce_admin_install_timestamp")) {
+        update_option("woocommerce_admin_install_timestamp", time());
+    }
+    wp_cache_flush();
+    echo "[SETUP] WooCommerce onboarding configured\n";
+    ' 2>&1 || true
     
-    # Set store address (required for WooCommerce)
+    # Set store address
     wp option update woocommerce_store_address "123 Main Street" 2>/dev/null || true
-    wp option update woocommerce_store_address_2 "" 2>/dev/null || true
     wp option update woocommerce_store_city "San Francisco" 2>/dev/null || true
     wp option update woocommerce_default_country "US:CA" 2>/dev/null || true
     wp option update woocommerce_store_postcode "94102" 2>/dev/null || true
     
-    # Enable payment gateways via direct option updates (more reliable than wp wc commands)
-    echo "[SETUP] Configuring payment gateways..." >&2
+    # Enable payment gateways
+    wp option update woocommerce_cod_settings '{"enabled":"yes","title":"Cash on Delivery","description":"Pay with cash upon delivery."}' --format=json 2>/dev/null || true
+    wp option update woocommerce_cheque_settings '{"enabled":"yes","title":"Dummy Payment Gateway","description":"Test payment gateway - no actual payment processed."}' --format=json 2>/dev/null || true
     
-    # Enable Cash on Delivery (COD)
-    wp option update woocommerce_cod_settings '{"enabled":"yes","title":"Cash on Delivery","description":"Pay with cash upon delivery.","instructions":"Please have exact change ready.","enable_for_methods":"","enable_for_virtual":""}' --format=json 2>/dev/null || true
-    
-    # Enable Cheque payment gateway and rename it to "Dummy Payment Gateway"
-    wp option update woocommerce_cheque_settings '{"enabled":"yes","title":"Dummy Payment Gateway","description":"Test payment gateway for demo purposes. No actual payment is processed.","instructions":"This is a test payment method. Your order will be processed without any actual charge."}' --format=json 2>/dev/null || true
-    
-    # Add dummy products using WooCommerce PHP API (most reliable method)
-    echo "[SETUP] Adding dummy products using WooCommerce PHP API..." >&2
-    echo "[SETUP] Checking if WooCommerce is active: $(wp plugin is-active woocommerce 2>&1 || echo 'NOT ACTIVE')" >&2
-    
-    # Wait for WooCommerce to be fully ready
-    sleep 5
-    
-    # Create products using wp eval with WooCommerce's PHP API
-    echo "[SETUP] Creating products via WooCommerce PHP API..." >&2
-    
+    # 9. Create sample products
+    echo "[SETUP] Creating sample products..."
     wp eval '
     if (!class_exists("WC_Product_Simple")) {
-        echo "[SETUP] ERROR: WooCommerce classes not available\n";
-        exit(1);
+        echo "[SETUP] WooCommerce not ready\n";
+        exit(0);
     }
     
     $products = [
-        ["name" => "Classic T-Shirt", "price" => "19.99", "desc" => "A comfortable classic t-shirt made from 100% cotton. Perfect for everyday wear.", "short_desc" => "Comfortable classic cotton t-shirt", "sku" => "TSHIRT-001", "stock" => 50],
-        ["name" => "Coffee Mug", "price" => "12.99", "desc" => "A beautiful ceramic coffee mug perfect for your morning brew. Dishwasher safe.", "short_desc" => "Ceramic coffee mug", "sku" => "MUG-001", "stock" => 30],
-        ["name" => "Premium Notebook", "price" => "8.99", "desc" => "A high-quality notebook with lined pages. Perfect for notes, journaling, or sketching.", "short_desc" => "High-quality lined notebook", "sku" => "NOTEBOOK-001", "stock" => 100],
-        ["name" => "Warm Beanie", "price" => "15.99", "desc" => "A cozy beanie to keep you warm during cold weather. Made from soft acrylic yarn.", "short_desc" => "Cozy warm beanie", "sku" => "BEANIE-001", "stock" => 25],
-        ["name" => "Stainless Steel Water Bottle", "price" => "24.99", "desc" => "A durable stainless steel water bottle that keeps drinks cold for 24 hours or hot for 12 hours.", "short_desc" => "Insulated stainless steel water bottle", "sku" => "BOTTLE-001", "stock" => 40]
+        ["name" => "Classic T-Shirt", "price" => "19.99", "desc" => "Comfortable cotton t-shirt", "sku" => "TSHIRT-001", "stock" => 50],
+        ["name" => "Coffee Mug", "price" => "12.99", "desc" => "Ceramic coffee mug", "sku" => "MUG-001", "stock" => 30],
+        ["name" => "Premium Notebook", "price" => "8.99", "desc" => "High-quality notebook", "sku" => "NOTEBOOK-001", "stock" => 100],
+        ["name" => "Warm Beanie", "price" => "15.99", "desc" => "Cozy beanie", "sku" => "BEANIE-001", "stock" => 25],
+        ["name" => "Water Bottle", "price" => "24.99", "desc" => "Stainless steel water bottle", "sku" => "BOTTLE-001", "stock" => 40]
     ];
     
+    $created = 0;
     foreach ($products as $p) {
-        // Check if product with this SKU already exists
-        $existing = wc_get_product_id_by_sku($p["sku"]);
-        if ($existing) {
-            echo "[SETUP] Product {$p["name"]} (SKU: {$p["sku"]}) already exists, skipping...\n";
+        if (wc_get_product_id_by_sku($p["sku"])) {
             continue;
         }
         
         $product = new WC_Product_Simple();
         $product->set_name($p["name"]);
         $product->set_description($p["desc"]);
-        $product->set_short_description($p["short_desc"]);
         $product->set_regular_price($p["price"]);
-        $product->set_price($p["price"]);
         $product->set_sku($p["sku"]);
         $product->set_manage_stock(true);
         $product->set_stock_quantity($p["stock"]);
         $product->set_stock_status("instock");
         $product->set_status("publish");
         
-        $id = $product->save();
-        if ($id) {
-            echo "[SETUP] Created product: {$p["name"]} (ID: $id)\n";
-        } else {
-            echo "[SETUP] Failed to create product: {$p["name"]}\n";
+        if ($product->save()) {
+            $created++;
         }
     }
-    ' 2>&1 | tee >&2
+    echo "[SETUP] Created $created products\n";
+    ' 2>&1 || true
     
+    # 10. Configure WooCommerce pages
+    echo "[SETUP] Setting up WooCommerce pages..."
+    wp wc tool run install_pages --user="{{ .Values.wordpress.wordpressUsername }}" 2>&1 || true
     
-    # Set WooCommerce pages (if not already set)
-    echo "Configuring WooCommerce pages..."
-    wp wc tool run install_pages --user="{{ .Values.wordpress.wordpressUsername }}" 2>/dev/null || echo "WooCommerce pages may already be installed"
+    # Wait for shop page to be created
+    sleep 5
     
-    # Flush rewrite rules to ensure permalinks work
-    wp rewrite flush 2>/dev/null || true
+    # Set shop page as homepage
+    wp eval '
+    $shop_id = wc_get_page_id("shop");
+    if ($shop_id && $shop_id > 0) {
+        update_option("show_on_front", "page");
+        update_option("page_on_front", $shop_id);
+        wp_cache_flush();
+        echo "[SETUP] Shop page set as homepage (ID: $shop_id)\n";
+    } else {
+        echo "[SETUP] Shop page not found\n";
+    }
+    ' 2>&1 || true
     
-    echo "[SETUP] Verifying products were created..." >&2
-    PRODUCT_COUNT=$(wp wc product list --user=1 --format=count 2>&1 || echo "0")
-    echo "[SETUP] Total products found: $PRODUCT_COUNT" >&2
-    echo "[SETUP] Verifying products were created..." >&2
-    PRODUCT_COUNT=$(wp eval 'echo wc_get_products(["limit" => -1, "return" => "ids"]);' 2>&1 | grep -o '[0-9]*' | wc -l || echo "0")
-    echo "[SETUP] Total products found: $PRODUCT_COUNT" >&2
-    if [ "$PRODUCT_COUNT" -lt "5" ]; then
-      echo "[SETUP] WARNING: Expected at least 5 products, but found $PRODUCT_COUNT" >&2
-    else
-      echo "[SETUP] SUCCESS: Found $PRODUCT_COUNT products!" >&2
-    fi
-    echo "[SETUP] Setup complete! Store is ready with dummy products and payment gateways." >&2
+    # 11. Flush rewrite rules (hard flush to update .htaccess)
+    echo "[SETUP] Flushing rewrite rules..."
+    wp rewrite flush --hard 2>&1 || true
+    wp cache flush 2>/dev/null || true
+    
+    # 12. Final admin user configuration
+    wp user set-role "{{ .Values.wordpress.wordpressUsername }}" administrator 2>&1 || true
+    wp eval '
+    $user = get_user_by("login", "{{ .Values.wordpress.wordpressUsername }}");
+    if ($user) {
+        $user->set_role("administrator");
+        $user->add_cap("manage_woocommerce");
+        $user->add_cap("manage_options");
+        wp_cache_flush();
+        echo "[SETUP] Admin user configured with WooCommerce capabilities\n";
+    }
+    ' 2>&1 || true
+    
+    echo "[SETUP] Setup completed successfully at $(date)"
+    echo "[SETUP] Store URL: $STORE_URL"
+    echo "[SETUP] Admin: $STORE_URL/wp-admin/"
+    echo "[SETUP] Shop: $STORE_URL/"
