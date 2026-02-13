@@ -1,31 +1,180 @@
-# Production Environment Values (VPS)
+# Production values for WooCommerce Helm chart
+# Override default values.yaml for production VPS deployment
+
 wordpress:
-  service:
-    type: ClusterIP
+  enabled: true
+  wordpressUsername: user
+  wordpressPassword: password  # CHANGE THIS in production
+  wordpressEmail: admin@yourdomain.com
+  
+  # Production-optimized resources
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  
+  mariadb:
+    enabled: false
+  
+  externalDatabase:
+    host: "mariadb-placeholder"
+    user: root
+    password: "root-password"  # CHANGE THIS in production
+    database: bitnami_wordpress
+
+  # Lifecycle hook to run setup inside WordPress container
+  lifecycleHooks:
+    postStart:
+      exec:
+        command:
+          - /bin/bash
+          - -c
+          - |
+            nohup /bin/bash -c '
+              until [ -f /opt/bitnami/wordpress/wp-config.php ]; do
+                echo "Waiting for WordPress initialization..." >> /tmp/setup.log 2>&1
+                sleep 2
+              done
+              if [ -f /scripts/setup.sh ]; then
+                /bin/bash /scripts/setup.sh >> /tmp/setup.log 2>&1
+              fi
+            ' > /dev/null 2>&1 &
+
+  extraVolumes:
+    - name: setup-script
+      configMap:
+        name: wp-setup
+        defaultMode: 0755
+
+  extraVolumeMounts:
+    - name: setup-script
+      mountPath: /scripts
+
   ingress:
     enabled: true
-    hostname: store.example.com # This will be overridden by the backend based on actual domain
-    annotations:
-      kubernetes.io/ingress.class: nginx
-      cert-manager.io/cluster-issuer: letsencrypt-prod
-  resources:
-    requests:
-      memory: "512Mi"
-      cpu: "500m"
-    limits:
-      memory: "1Gi"
-      cpu: "1000m"
+    # CHANGE THIS: Replace with your actual domain or VM IP
+    hostname: "REPLACE_WITH_ACTUAL_HOSTNAME"
+    # Use traefik for k3s (default ingress controller)
+    ingressClassName: traefik
+    annotations: {}
+    # For HTTPS with cert-manager (optional):
+    # annotations:
+    #   cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # tls:
+    #   - secretName: store-tls
+    #     hosts:
+    #       - "*.store.yourdomain.com"
+
+  # Liveness and readiness probes
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 120
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+  
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
 
 mariadb:
+  enabled: true
+  auth:
+    rootPassword: "root-password"  # CHANGE THIS in production
+    database: bitnami_wordpress
+  
+  # Production-optimized resources
   primary:
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
     persistence:
       enabled: true
-      size: 10Gi
-  resources:
-    requests:
-      memory: "512Mi"
-      cpu: "500m"
-    limits:
-      memory: "1Gi"
-      cpu: "1000m"
+      size: 5Gi  # Larger for production
+      # For cloud providers, specify storageClass:
+      # storageClass: "standard-rwo"  # GCP
+      # storageClass: "gp3"            # AWS
+      # storageClass: "managed-premium" # Azure
 
+# Security & Isolation (production-hardened)
+networkPolicy:
+  enabled: true
+  # Stricter rules for production
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: kube-system
+      ports:
+      - protocol: TCP
+        port: 80
+      - protocol: TCP
+        port: 443
+
+resourceQuota:
+  enabled: true
+  # Higher limits for production
+  requests:
+    cpu: "2"
+    memory: "2Gi"
+    persistentvolumeclaims: "3"
+  limits:
+    cpu: "4"
+    memory: "4Gi"
+
+limitRange:
+  enabled: true
+  # Production defaults
+  default:
+    cpu: "500m"
+    memory: "512Mi"
+  defaultRequest:
+    cpu: "100m"
+    memory: "256Mi"
+  max:
+    cpu: "2"
+    memory: "2Gi"
+  min:
+    cpu: "50m"
+    memory: "128Mi"
+
+# Additional production configurations
+# Uncomment and configure as needed:
+
+# podSecurityPolicy:
+#   enabled: true
+
+# serviceAccount:
+#   create: true
+#   annotations:
+#     # For cloud provider IAM
+#     iam.gke.io/gcp-service-account: "store-sa@project.iam.gserviceaccount.com"
+
+# autoscaling:
+#   enabled: true
+#   minReplicas: 2
+#   maxReplicas: 5
+#   targetCPUUtilizationPercentage: 80
+
+# affinity:
+#   podAntiAffinity:
+#     preferredDuringSchedulingIgnoredDuringExecution:
+#     - weight: 100
+#       podAffinityTerm:
+#         labelSelector:
+#           matchExpressions:
+#           - key: app.kubernetes.io/name
+#             operator: In
+#             values:
+#             - wordpress
+#         topologyKey: kubernetes.io/hostname
