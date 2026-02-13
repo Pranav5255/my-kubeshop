@@ -4,20 +4,6 @@
 
 ---
 
-## Table of Contents
-1. [Architecture Overview](#architecture-overview)
-2. [Design Decisions & Tradeoffs](#design-decisions--tradeoffs)
-3. [Component Responsibilities](#component-responsibilities)
-4. [Data Flow & Provisioning](#data-flow--provisioning)
-5. [Isolation & Multi-tenancy](#isolation--multi-tenancy)
-6. [Reliability & Failure Handling](#reliability--failure-handling)
-7. [Security Posture](#security-posture)
-8. [Scalability & Performance](#scalability--performance)
-9. [Local-to-Production Migration](#local-to-production-migration)
-10. [Future Improvements](#future-improvements)
-
----
-
 ## Architecture Overview
 
 ### High-Level Architecture
@@ -31,43 +17,43 @@
                               │ HTTP (REST API)
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
-│               Backend API Server (Node.js/Express)           │
-│  ┌────────────┐  ┌───────────┐  ┌──────────┐  ┌──────────┐│
-│  │Provisioner │  │Audit Log  │  │  Quota   │  │  Queue   ││
-│  │  Manager   │  │  Service  │  │  Manager │  │  Manager ││
-│  └────────────┘  └───────────┘  └──────────┘  └──────────┘│
+│               Backend API Server (Node.js/Express)          │
+│  ┌────────────┐  ┌───────────┐  ┌──────────┐  ┌──────────┐  │
+│  │Provisioner │  │Audit Log  │  │  Quota   │  │  Queue   │  │
+│  │  Manager   │  │  Service  │  │  Manager │  │  Manager │  │
+│  └────────────┘  └───────────┘  └──────────┘  └──────────┘  │
 └─────────────────────────────────────────────────────────────┘
                               │
                               │ kubectl + Helm
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
-│            Kubernetes Cluster (k3d local / k3s prod)         │
-│                                                              │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Namespace: store1                                   │   │
-│  │  ┌──────────────┐  ┌──────────────┐                │   │
-│  │  │  WordPress   │  │   MariaDB    │                │   │
-│  │  │  Deployment  │  │  StatefulSet │                │   │
-│  │  └──────────────┘  └──────────────┘                │   │
-│  │  ┌──────────────┐  ┌──────────────┐                │   │
-│  │  │  Ingress     │  │ NetworkPolicy│                │   │
-│  │  └──────────────┘  └──────────────┘                │   │
-│  │  ┌──────────────┐  ┌──────────────┐                │   │
-│  │  │ResourceQuota │  │  LimitRange  │                │   │
-│  │  └──────────────┘  └──────────────┘                │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                              │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Namespace: store2 (isolated)                        │   │
-│  │  ... same resources ...                              │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                              │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Namespace: kube-system                              │   │
-│  │  ┌──────────────┐                                    │   │
-│  │  │   Traefik    │  (Ingress Controller)             │   │
-│  │  └──────────────┘                                    │   │
-│  └─────────────────────────────────────────────────────┘   │
+│            Kubernetes Cluster (k3d local / k3s prod)        │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  Namespace: store1                                  │    │
+│  │  ┌──────────────┐  ┌──────────────┐                 │    │
+│  │  │  WordPress   │  │   MariaDB    │                 │    │
+│  │  │  Deployment  │  │  StatefulSet │                 │    │
+│  │  └──────────────┘  └──────────────┘                 │    │
+│  │  ┌──────────────┐  ┌──────────────┐                 │    │
+│  │  │  Ingress     │  │ NetworkPolicy│                 │    │
+│  │  └──────────────┘  └──────────────┘                 │    │
+│  │  ┌──────────────┐  ┌──────────────┐                 │    │
+│  │  │ResourceQuota │  │  LimitRange  │                 │    │
+│  │  └──────────────┘  └──────────────┘                 │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  Namespace: store2 (isolated)                       │    │
+│  │  ... same resources ...                             │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  Namespace: kube-system                             │    │
+│  │  ┌──────────────┐                                   │    │
+│  │  │   Traefik    │  (Ingress Controller)             │    │
+│  │  └──────────────┘                                   │    │
+│  └─────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -914,7 +900,6 @@ class ProvisioningQueue {
 
 **Cluster Capacity Estimate:**
 - 4 CPU, 8GB RAM cluster: ~8-12 stores comfortably
-- 8 CPU, 16GB RAM cluster: ~20-30 stores comfortably
 
 ---
 
@@ -1043,115 +1028,4 @@ export NODE_ENV="production"
 - [ ] Use external secret manager (AWS/GCP/Vault)
 - [ ] Configure backups for PVCs
 
----
 
-## Future Improvements
-
-### Short-Term (Next 2 Weeks)
-
-1. **Authentication & Authorization**
-   - JWT-based user authentication
-   - Per-user store ownership
-   - RBAC for API endpoints
-
-2. **Persistent Quota Storage**
-   - Move quota from in-memory Map to Redis/database
-   - Survive backend restarts
-
-3. **Better Error Reporting**
-   - Structured error codes
-   - User-friendly error messages
-   - Retry mechanisms with exponential backoff
-
-4. **Cost Estimation**
-   - Show estimated cost per store
-   - Budget limits per user
-   - Resource usage dashboards
-
----
-
-### Medium-Term (Next 1-2 Months)
-
-1. **MedusaJS Implementation**
-   - Complete MedusaJS provisioner
-   - PostgreSQL StatefulSet
-   - Redis for caching
-   - Medusa admin UI
-
-2. **Custom Domains**
-   - Allow users to bring own domains
-   - Automatic DNS verification
-   - TLS certificate provisioning
-
-3. **Backup & Restore**
-   - Automated PVC snapshots
-   - Store backup/restore API
-   - Point-in-time recovery
-
-4. **Plugin Marketplace**
-   - Pre-configured WooCommerce plugin bundles
-   - One-click plugin installation
-   - Plugin version management
-
----
-
-### Long-Term (Next 3-6 Months)
-
-1. **Multi-Region Support**
-   - Deploy stores in different regions
-   - Geographic load balancing
-   - Data residency compliance
-
-2. **GitOps Integration**
-   - Store configs in Git
-   - ArgoCD/Flux for deployment
-   - Declarative store management
-
-3. **AI-Powered Features (Round 2)**
-   - Natural language store creation
-   - AI-generated product descriptions
-   - Automated SEO optimization
-   - Chatbot for customer support
-
-4. **Managed Upgrades**
-   - Automatic WordPress/WooCommerce updates
-   - Blue-green deployments
-   - Canary releases for plugins
-
----
-
-## Conclusion
-
-This system demonstrates production-grade Kubernetes orchestration with:
-- ✅ Strong multi-tenant isolation
-- ✅ Reliable provisioning and cleanup
-- ✅ Comprehensive observability
-- ✅ Security best practices
-- ✅ Clear local-to-production path
-
-**Key Learnings:**
-1. Kubernetes namespace isolation is powerful for multi-tenancy
-2. Helm charts enable environment-specific configurations
-3. Lifecycle hooks solve filesystem access problems
-4. Graceful cleanup requires multiple fallback mechanisms
-5. Queue-based concurrency prevents cluster overload
-
-**Production Readiness:**
-- ✅ Runs on local Kubernetes (k3d)
-- ✅ Deployable to production (k3s)
-- ✅ Passes definition of done (end-to-end order flow)
-- ⚠️ Needs authentication for multi-user scenarios
-- ⚠️ Needs external secret management for production
-- ⚠️ Needs monitoring/alerting infrastructure
-
-**Next Steps for Urumi Round 2:**
-- Build Gen AI orchestration layer
-- Natural language store configuration
-- AI-powered product management
-- Intelligent resource allocation
-
----
-
-**Document Version:** 1.0  
-**Last Updated:** February 13, 2026  
-**Author:** Urumi AI SDE Internship Candidate  
