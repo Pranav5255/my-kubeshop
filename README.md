@@ -24,6 +24,8 @@ open http://localhost:5173
 
 ### Production VPS (k3s)
 
+**Automated Deployment with Systemd Services:**
+
 ```bash
 # 1. SSH into your VM
 ssh user@<VM_IP>
@@ -35,30 +37,30 @@ curl -sfL https://get.k3s.io | sh -
 git clone <your-repo-url>
 cd kubernetes-shopify-infra
 
-# 4. Install dependencies
-cd backend && npm install && npm run build
-cd ../frontend && npm install && npm run build
+# 4. Run automated deployment (installs Nginx automatically)
+chmod +x deployment/*.sh
+./deployment/deploy-vm.sh
 
-# 5. Set environment variables
-export BASE_DOMAIN=$(curl -s ifconfig.me)
-export NODE_ENV=production
-export PORT=3001
-
-# 6. Start backend (as systemd service or screen)
-cd backend && node dist/index.js
-
-# 7. Serve frontend via Nginx
-sudo apt install nginx
-sudo cp -r frontend/dist/* /var/www/html/
-
-# 8. Access dashboard
-open http://<VM_IP>
-
-# 9. Create stores - they'll be accessible at:
-# http://<store-name>.store.<VM_IP>.nip.io
+# Services now run persistently via systemd!
 ```
 
-See [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md) for detailed architecture.
+**Service Management:**
+```bash
+# Start/stop services
+./deployment/service-control.sh {start|stop|restart|status|logs}
+
+# View logs
+sudo journalctl -u urumi-backend -f
+
+# Update application code
+./deployment/update-app.sh
+```
+
+**Access your platform:**
+- Dashboard: `http://<VM_IP>`
+- Stores: `http://<store-name>.store.<VM_IP>.nip.io`
+
+See [deployment/README.md](deployment/README.md) for detailed deployment guide and [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md) for architecture.
 
 ## 📋 Prerequisites
 

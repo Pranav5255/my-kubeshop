@@ -1,0 +1,27 @@
+[Unit]
+Description=Urumi Store Provisioning Backend API
+Documentation=https://github.com/your-repo/kubernetes-shopify-infra
+After=network-online.target k3s.service
+Wants=network-online.target
+Requires=k3s.service
+
+[Service]
+Type=simple
+User=REPLACE_WITH_USERNAME
+WorkingDirectory=REPLACE_WITH_PROJECT_PATH/backend
+Environment="NODE_ENV=production"
+Environment="PORT=3001"
+Environment="BASE_DOMAIN=REPLACE_WITH_VM_IP"
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=urumi-backend
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
