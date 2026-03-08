@@ -1,8 +1,8 @@
-# Urumi Store Provisioning Platform
+# KubeShop Provisioning Platform
 
 **Enterprise-grade Kubernetes-native platform for provisioning e-commerce stores (WooCommerce, MedusaJS) on demand.**
 
-A production-ready system designed for the Urumi AI SDE internship Round 1 assessment, featuring advanced observability, security, scalability, and multi-tenant isolation.
+A production-ready system designed for the kubeshop AI SDE internship Round 1 assessment, featuring advanced observability, security, scalability, and multi-tenant isolation.
 
 ## 🚀 Quick Start
 
@@ -50,7 +50,7 @@ chmod +x deployment/*.sh
 ./deployment/service-control.sh {start|stop|restart|status|logs}
 
 # View logs
-sudo journalctl -u urumi-backend -f
+sudo journalctl -u kubeshop-backend -f
 
 # Update application code
 ./deployment/update-app.sh
@@ -172,7 +172,7 @@ See [deployment/README.md](deployment/README.md) for detailed deployment guide a
 #### Step 1: Create k3d Cluster
 ```bash
 # Create cluster with port mappings for ingress
-k3d cluster create urumi \
+k3d cluster create kubeshop \
   --port "80:80@loadbalancer" \
   --port "443:443@loadbalancer" \
   --api-port 6443 \
@@ -288,9 +288,9 @@ VM_IP=$(curl -s ifconfig.me)
 echo "Your VM IP: $VM_IP"
 
 # Create systemd service
-sudo tee /etc/systemd/system/urumi-backend.service > /dev/null <<EOF
+sudo tee /etc/systemd/system/kubeshop-backend.service > /dev/null <<EOF
 [Unit]
-Description=Urumi Store Backend API
+Description=kubeshop Store Backend API
 After=network.target k3s.service
 
 [Service]
@@ -310,11 +310,11 @@ EOF
 
 # Start backend service
 sudo systemctl daemon-reload
-sudo systemctl enable urumi-backend
-sudo systemctl start urumi-backend
+sudo systemctl enable kubeshop-backend
+sudo systemctl start kubeshop-backend
 
 # Check status
-sudo systemctl status urumi-backend
+sudo systemctl status kubeshop-backend
 curl http://localhost:3001/health
 ```
 
@@ -641,7 +641,7 @@ kubectl delete namespace <store-name> --force --grace-period=0
 npm run dev 2>&1 | tee backend.log
 
 # Production
-sudo journalctl -u urumi-backend -f
+sudo journalctl -u kubeshop-backend -f
 ```
 
 **Common issues:**
@@ -754,7 +754,7 @@ kubernetes-shopify-infra/
 **Useful Commands:**
 ```bash
 # List all stores (Kubernetes-level)
-kubectl get namespaces -l app=urumi-store
+kubectl get namespaces -l app=kubeshop-store
 
 # Get store status
 curl http://localhost:3001/stores
