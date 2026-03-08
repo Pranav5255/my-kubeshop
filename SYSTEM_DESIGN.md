@@ -1,6 +1,6 @@
 # System Design & Architecture
 
-**Urumi Store Provisioning Platform - Technical Deep Dive**
+**KubeShop Store Provisioning Platform - Technical Deep Dive**
 
 ---
 
@@ -279,7 +279,7 @@ interface IStoreProvisioner {
 **WooCommerceProvisioner:**
 - Uses `execa` to run helm/kubectl commands
 - Checks for existing namespace (idempotency)
-- Creates namespace with `app=urumi-store` label
+- Creates namespace with `app=KubeShop-store` label
 - Runs `helm install` with dynamic values
 - Polls pod status for readiness
 
@@ -984,7 +984,7 @@ helm install store1 charts/woocommerce \
 
 **Local Development:**
 ```bash
-1. k3d cluster create urumi
+1. k3d cluster create KubeShop
 2. helm repo add traefik https://traefik.github.io/charts
 3. helm install traefik traefik/traefik -n kube-system
 4. cd backend && npm run dev
